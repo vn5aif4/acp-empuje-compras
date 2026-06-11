@@ -73,6 +73,27 @@ def _resumen_html(rows: list[dict], dias_inv: int) -> str:
     staple_cajas  = sum(int(r.get("CAJAS_A_PEDIR", 0) or 0) for r in rows if str(r.get("APROV", "")).upper() == "STAPLE")
     carru_cajas   = total_cajas - staple_cajas
 
+    # Calcular cajas por proveedor para el render inicial
+    from collections import defaultdict
+    prov_cajas = defaultdict(int)
+    for r in rows:
+        cjs = int(r.get("CAJAS_A_PEDIR", 0) or 0)
+        p = r.get("PROVEEDOR", "Sin Proveedor").upper()
+        if cjs > 0:
+            prov_cajas[p] += cjs
+    
+    sorted_provs = sorted(prov_cajas.items(), key=lambda x: x[1], reverse=True)
+    if sorted_provs:
+        prov_items = "".join(
+            f'<div class="bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-100 flex items-center gap-2">'
+            f'<span class="font-bold text-gray-800">{prov}</span>'
+            f'<span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">{cjs:,} cajas</span>'
+            f'</div>'
+            for prov, cjs in sorted_provs
+        )
+    else:
+        prov_items = '<span class="text-gray-400 font-medium">Ningún proveedor con pedido visible.</span>'
+
     cards = [
         ("Filas",           f"{len(rows):,}",       "text-[#0053e2]", "kpi-filas"),
         ("Ítems únicos",    f"{items_uniq:,}",       "text-[#0053e2]", "kpi-items"),
@@ -88,7 +109,20 @@ def _resumen_html(rows: list[dict], dias_inv: int) -> str:
         f'</div>'
         for lbl, v, c, kid in cards
     )
-    return f'<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">{items_html}</div>'
+    
+    summary_section = (
+        f'<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">{items_html}</div>'
+        f'<div class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm mb-4">'
+        f'  <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">'
+        f'    <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">'
+        f'      <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />'
+        f'    </svg>'
+        f'    Resumen de Cajas por Proveedor (Con Pedido)'
+        f'  </div>'
+        f'  <div id="prov-summary-container" class="flex flex-wrap gap-2 text-xs">{prov_items}</div>'
+        f'</div>'
+    )
+    return summary_section
 
 
 # ── Tabla ──────────────────────────────────────────────────────────────────────
@@ -453,6 +487,7 @@ PAGE = """<!DOCTYPE html>
       let carruCajas = 0;
       let itemsSet = new Set();
       let provsSet = new Set();
+      const provCajas = {};
 
       document.querySelectorAll('#tabla-resultados tbody tr').forEach(tr => {
         const rowText = tr.dataset.row;
@@ -481,6 +516,9 @@ PAGE = """<!DOCTYPE html>
           }
           itemsSet.add(item);
           provsSet.add(prov);
+          if (cajas > 0) {
+            provCajas[prov] = (provCajas[prov] || 0) + cajas;
+          }
         }
       });
 
@@ -498,6 +536,22 @@ PAGE = """<!DOCTYPE html>
       if (kpiCajas) kpiCajas.textContent = totalCajas.toLocaleString();
       if (kpiStaple) kpiStaple.textContent = stapleCajas.toLocaleString();
       if (kpiCarrusel) kpiCarrusel.textContent = carruCajas.toLocaleString();
+
+      // Actualizar resumen de proveedores
+      const sortedProvs = Object.entries(provCajas).sort((a, b) => b[1] - a[1]);
+      const container = document.getElementById('prov-summary-container');
+      if (container) {
+        if (sortedProvs.length === 0) {
+          container.innerHTML = '<span class="text-gray-400 font-medium">Ningún proveedor con pedido visible.</span>';
+        } else {
+          container.innerHTML = sortedProvs.map(([prov, cjs]) => {
+            return `<div class="bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-100 flex items-center gap-2">
+              <span class="font-bold text-gray-800">${prov}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">${cjs.toLocaleString()} cajas</span>
+            </div>`;
+          }).join('');
+        }
+      }
     }
 
     // Exportar con formato compra solicitado:
