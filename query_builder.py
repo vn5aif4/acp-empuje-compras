@@ -1,0 +1,316 @@
+"""Construye y ejecuta el query ACP-empuje contra BigQuery.
+
+Billing project: leído de .env → BQ_BILLING_PROJECT
+gcloud path:     auto-detectado (Windows + Linux)
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from typing import Any
+
+import google.oauth2.credentials
+from google.cloud import bigquery
+from dotenv import load_dotenv
+
+TABLE = "wmt-edw-sandbox.DMP.DRV_ACP_DMP"
+
+_ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
+
+
+def _billing_project() -> str:
+    """Lee BQ_BILLING_PROJECT del .env en cada llamada (no en import time)."""
+    load_dotenv(_ENV_FILE, override=True)
+    candidates = [
+        os.getenv("BQ_BILLING_PROJECT", ""),
+        "wmt-9ca45f77fc0cfa9cafcba7a82a",
+    ]
+    for p in candidates:
+        if p and p.strip():
+            return p.strip()
+    return "wmt-9ca45f77fc0cfa9cafcba7a82a"
+
+
+# ── gcloud path ────────────────────────────────────────────────────────────────
+
+def _gcloud_cmd() -> str:
+    found = shutil.which("gcloud") or shutil.which("gcloud.cmd")
+    if found:
+        return found
+    win_path = (
+        r"C:\Users\vn5aif4\AppData\Local\Google\CloudSDK"
+        r"\google-cloud-sdk\bin\gcloud.cmd"
+    )
+    if os.path.exists(win_path):
+        return win_path
+    raise FileNotFoundError("No se encontro gcloud. Instala Google Cloud SDK.")
+
+
+# ── Filtros ────────────────────────────────────────────────────────────────────
+
+@dataclass
+class FiltrosCompras:
+    dias_inv:  int  = 15
+    dept:      str  = "2,4,13,26,40,46"
+    categoria: str  = ""
+    items:     str  = ""
+    proveedor: str  = ""
+    whse_nbr:  str  = ""
+    solo_con_pedido: bool = True   # False = muestra TODAS las filas
+
+
+def _lista_int(raw: str) -> list[int]:
+    return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+
+
+def _lista_str(raw: str) -> list[str]:
+    return [x.strip().upper() for x in raw.split(",") if x.strip()]
+
+
+# ── Query builder ──────────────────────────────────────────────────────────────
+
+def construir_query(f: FiltrosCompras) -> str:
+    dias = max(1, int(f.dias_inv))
+
+    depts = [d.strip() for d in f.dept.split(",") if d.strip().isdigit()]
+    dept_str = ", ".join(depts) if depts else "13"
+
+    filtro_cat   = "AND T1.CATEGORIA = @categoria" if f.categoria.strip() else ""
+    filtro_prov  = "AND T1.PROVEEDOR = @proveedor" if f.proveedor.strip() else ""
+    filtro_item  = "AND T1.ITEM IN UNNEST(@items)"  if _lista_int(f.items)  else ""
+    filtro_whse  = "AND T1.WHSE_NBR IN UNNEST(@whse_list)" if _lista_int(f.whse_nbr) else ""
+
+    filtro_pedido = "WHERE CAJAS_A_PEDIR > 0" if f.solo_con_pedido else ""
+
+    return f"""
+WITH
+params AS (
+    SELECT {dias} AS dias_inv
+),
+
+base AS (
+    SELECT
+        T1.ITEM,
+        CAST(T1.CID AS INT64)                                       AS CID,
+        T1.PROVEEDOR,
+        T1.DESCRIPCION,
+        T1.DEPT,
+        T1.CATEGORIA,
+        T1.APROV,
+        T1.WHPK_QTY,
+        T1.TI * T1.HI                                               AS PALLET_CAJAS,
+        T1.TIENDA,
+        T1.WHSE_NBR,
+        T1.OH, T1.IT, T1.IW, T1.OO,
+        T1.FCST_N1W,
+        CASE
+            WHEN T1.WHSE_NBR = 6009 THEN T1.STOCK_6009
+            WHEN T1.WHSE_NBR = 6020 THEN T1.STOCK_6020
+            WHEN T1.WHSE_NBR = 6003 THEN T1.STOCK_6003
+            WHEN T1.WHSE_NBR = 6010 THEN T1.STOCK_6010
+            WHEN T1.WHSE_NBR = 6024 THEN T1.STOCK_6024
+        END                                                          AS STOCK_CD,
+        P.dias_inv,
+        SUM(T1.FCST_N1W) OVER (PARTITION BY T1.CID, T1.WHSE_NBR)   AS fcst_cd_sum,
+        ROW_NUMBER() OVER (
+            PARTITION BY T1.ITEM, T1.WHSE_NBR ORDER BY T1.TIENDA
+        )                                                            AS rn
+    FROM `{TABLE}` T1
+    CROSS JOIN params P
+    WHERE T1.STATUS IN ('A')
+      AND T1.DEPT IN ({dept_str})
+      {filtro_cat}
+      {filtro_item}
+      {filtro_prov}
+      {filtro_whse}
+),
+
+calculos AS (
+    SELECT *,
+        OH + IT + IW + OO                                            AS TUBERIA_,
+        ROUND(dias_inv * FCST_N1W / 7, 0)                           AS MAX_ND_UNI,
+        CASE
+            WHEN fcst_cd_sum > 0
+            THEN ROUND(STOCK_CD * WHPK_QTY * 7 / fcst_cd_sum, 1)
+            ELSE NULL
+        END                                                          AS DOH_CD,
+        STOCK_CD * WHPK_QTY                                         AS STOCK_CD_UNI
+    FROM base
+),
+
+gaps AS (
+    SELECT *,
+        CASE WHEN FCST_N1W > 0
+             THEN ROUND(TUBERIA_ * 7 / FCST_N1W, 1) ELSE NULL END  AS DOH_ACTUAL,
+        GREATEST(0, MAX_ND_UNI - TUBERIA_)                          AS GAP_UNI,
+        CASE WHEN TUBERIA_ > MAX_ND_UNI
+             THEN CEIL((TUBERIA_ - MAX_ND_UNI) / WHPK_QTY)
+             ELSE 0 END                                              AS EXCESO_CAJAS
+    FROM calculos
+),
+
+gap_cajas AS (
+    SELECT *,
+        CASE WHEN GAP_UNI > 0 THEN CEIL(GAP_UNI / WHPK_QTY) ELSE 0 END
+                                                                     AS GAP_CAJAS_BASE
+    FROM gaps
+),
+
+cajas AS (
+    SELECT *,
+        CASE
+          WHEN APROV = 'STAPLE' THEN
+            CASE
+              WHEN rn = 1 AND fcst_cd_sum > 0 AND DOH_CD <= dias_inv * 2
+              THEN CEIL(
+                     GREATEST(0, dias_inv * fcst_cd_sum / 7 - STOCK_CD_UNI)
+                     / WHPK_QTY / PALLET_CAJAS
+                   ) * PALLET_CAJAS
+              ELSE 0
+            END
+          ELSE
+            CASE
+              WHEN FCST_N1W > 0
+               AND DOH_CD <= dias_inv * 2
+               AND (TUBERIA_ + GAP_CAJAS_BASE * WHPK_QTY) * 7
+                   / FCST_N1W <= dias_inv * 2
+              THEN GAP_CAJAS_BASE
+              ELSE 0
+            END
+        END                                                          AS CAJAS_A_PEDIR
+    FROM gap_cajas
+),
+
+cajas_cd AS (
+    SELECT *,
+        SUM(CAJAS_A_PEDIR) OVER (PARTITION BY ITEM, WHSE_NBR)       AS cajas_ped_cd
+    FROM cajas
+),
+
+resultado AS (
+    SELECT
+        ITEM,
+        CID,
+        PROVEEDOR,
+        DESCRIPCION,
+        DEPT,
+        CATEGORIA,
+        APROV,
+        WHPK_QTY,
+        PALLET_CAJAS,
+        TIENDA,
+        WHSE_NBR,
+        OH, IT, IW, OO,
+        FCST_N1W,
+        STOCK_CD,
+        TUBERIA_,
+        DOH_ACTUAL,
+        CAST(MAX_ND_UNI AS INT64)                                    AS MAX_ND_UNI,
+        CAST(GAP_UNI    AS INT64)                                    AS GAP_UNI,
+        GAP_CAJAS_BASE,
+        CAJAS_A_PEDIR,
+        CASE
+            WHEN PALLET_CAJAS > 0
+            THEN ROUND(CAJAS_A_PEDIR / PALLET_CAJAS, 2)
+            ELSE 0
+        END                                                          AS PALLETS_A_PEDIR,
+        EXCESO_CAJAS,
+        CASE
+            WHEN APROV = 'STAPLE' THEN 'INV'
+            ELSE
+                CASE WHEN FCST_N1W > 0
+                     THEN CAST(ROUND((TUBERIA_ + CAJAS_A_PEDIR * WHPK_QTY) * 7 / FCST_N1W, 1) AS STRING)
+                     ELSE 'SIN VENTA' END
+        END                                                          AS DOH_TIENDA,
+        DOH_CD,
+        CASE
+            WHEN APROV = 'STAPLE' AND fcst_cd_sum > 0
+            THEN ROUND((STOCK_CD + cajas_ped_cd) * WHPK_QTY * 7 / fcst_cd_sum, 1)
+            ELSE NULL
+        END                                                          AS DOH_CD_POST,
+        dias_inv
+    FROM cajas_cd
+)
+
+SELECT *
+FROM resultado
+{filtro_pedido}
+ORDER BY PROVEEDOR, ITEM, WHSE_NBR, TIENDA
+"""
+
+
+# ── Credenciales ───────────────────────────────────────────────────────────────
+
+_ADC_PATHS = [
+    os.path.join(os.environ.get("APPDATA", ""), "gcloud", "application_default_credentials.json"),
+    os.path.expanduser("~/.config/gcloud/application_default_credentials.json"),
+]
+
+
+def _get_credentials():
+    """Devuelve credenciales Google usando ADC o token de gcloud."""
+    import json
+    from google.auth.transport.requests import Request
+
+    # 1. Intentar ADC desde archivo
+    for adc_path in _ADC_PATHS:
+        if os.path.exists(adc_path):
+            with open(adc_path) as fh:
+                data = json.load(fh)
+            creds = google.oauth2.credentials.Credentials(
+                token=None,
+                refresh_token=data.get("refresh_token"),
+                token_uri=data.get("token_uri", "https://oauth2.googleapis.com/token"),
+                client_id=data.get("client_id"),
+                client_secret=data.get("client_secret"),
+            )
+            creds.refresh(Request())
+            return creds
+
+    # 2. Fallback: token de gcloud via subprocess (stdin=DEVNULL para no colgar)
+    cmd = _gcloud_cmd()
+    result = subprocess.run(
+        [cmd, "auth", "print-access-token"],
+        capture_output=True, text=True,
+        timeout=30, shell=True, stdin=subprocess.DEVNULL,
+    )
+    lineas = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+    if not lineas:
+        raise RuntimeError(
+            "No se encontraron credenciales Google. "
+            "Ejecuta: gcloud auth application-default login"
+        )
+    token = lineas[-1]
+    return google.oauth2.credentials.Credentials(token=token)
+
+
+# ── Ejecución ──────────────────────────────────────────────────────────────────
+
+def ejecutar_query(
+    f: FiltrosCompras,
+    billing_project: str = "",
+) -> tuple[list[dict[str, Any]], str]:
+    """Retorna (filas, sql_usado). Lanza Exception si BQ falla."""
+    creds   = _get_credentials()
+    proyecto = billing_project.strip() or _billing_project()
+    client   = bigquery.Client(project=proyecto, credentials=creds)
+    sql      = construir_query(f)
+
+    params: list = []
+    if f.categoria.strip():
+        params.append(bigquery.ScalarQueryParameter("categoria", "STRING", f.categoria.strip()))
+    if f.proveedor.strip():
+        params.append(bigquery.ScalarQueryParameter("proveedor", "STRING", f.proveedor.strip().upper()))
+    items_list = _lista_int(f.items)
+    if items_list:
+        params.append(bigquery.ArrayQueryParameter("items", "INT64", items_list))
+    whse_list = _lista_int(f.whse_nbr)
+    if whse_list:
+        params.append(bigquery.ArrayQueryParameter("whse_list", "INT64", whse_list))
+
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    job        = client.query(sql, job_config=job_config)
+    rows       = [dict(r) for r in job.result()]
+    return rows, sql

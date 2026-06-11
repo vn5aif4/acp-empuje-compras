@@ -1,0 +1,11 @@
+# KITT (Concord) Deployment Configuration
+# https://gecgit.walmart.com/kitt-docs/kitt-spec/
+
+name: acp-empuje-compras
+type: python311
+entrypoint: uvicorn main:app --host 0.0.0.0 --port $PORT
+port: 8080
+
+build:
+  - pip install --upgrade pip
+  - pip install -r requirements.txt --index-url https://pypi.ci.artifacts.walmart.com/artifactory/api/pypi/external-pypi/simple --allow-insecure-host pypi.ci.artifacts.walmart.com
