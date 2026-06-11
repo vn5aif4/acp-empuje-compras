@@ -142,6 +142,7 @@ _THEAD = """
     <th class="px-3 py-2.5 whitespace-nowrap text-right font-bold text-gray-700">Cajas a Pedir</th>
     <th class="px-3 py-2.5 whitespace-nowrap text-center">DOH Tienda</th>
     <th class="px-3 py-2.5 whitespace-nowrap text-center">DOH CD Post</th>
+    <th class="px-3 py-2.5 whitespace-nowrap text-center text-red-600 font-bold">Quitar</th>
   </tr>
 </thead>
 """
@@ -197,6 +198,13 @@ def _fila_html(r: dict, dias_inv: int) -> str:
         f'<td class="px-3 py-2 text-right {cajas_cls}">{_num(cajas)}</td>'
         f'<td class="px-3 py-2 text-center">{_doh_badge(doh_tienda, dias_inv)}</td>'
         f'<td class="px-3 py-2 text-center">{_doh_badge(doh_cd_post, dias_inv)}</td>'
+        f'<td class="px-3 py-2 text-center">'
+        f'  <button onclick="eliminarFila(this)" class="text-red-500 hover:text-red-700 hover:scale-115 transition-all p-1" title="Eliminar de la consulta">'
+        f'    <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">'
+        f'      <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />'
+        f'    </svg>'
+        f'  </button>'
+        f'</td>'
         f'</tr>'
     )
 
@@ -435,6 +443,14 @@ PAGE = """<!DOCTYPE html>
 
   <!-- Script interactivo BI -->
   <script>
+    function eliminarFila(btn) {
+      const tr = btn.closest('tr');
+      if (tr) {
+        tr.classList.add('manually-excluded');
+        applyBiFilters();
+      }
+    }
+
     // Mostrar/ocultar el overlay de carga usando eventos de HTMX
     document.addEventListener('htmx:configRequest', function() {
       document.getElementById('loading-overlay').classList.remove('hidden');
@@ -508,6 +524,10 @@ PAGE = """<!DOCTYPE html>
       const provCajas = {};
 
       document.querySelectorAll('#tabla-resultados tbody tr').forEach(tr => {
+        if (tr.classList.contains('manually-excluded')) {
+          tr.style.display = 'none';
+          return;
+        }
         const rowText = tr.dataset.row;
         const aprov = tr.dataset.aprov;
         const whse = tr.dataset.whse;
