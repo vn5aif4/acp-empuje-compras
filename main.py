@@ -166,6 +166,13 @@ def _fila_html(r: dict, dias_inv: int) -> str:
         f"{r.get('CATEGORIA','')} {aprov} {whse_str}"
     ).lower()
 
+    doh_val = doh_cd_post if aprov == "STAPLE" else doh_tienda
+    try:
+        float(str(doh_val))
+        doh_str = str(doh_val)
+    except (ValueError, TypeError):
+        doh_str = ""
+
     return (
         f'<tr class="hover:bg-blue-50 border-b border-gray-100 text-xs font-normal" '
         f'data-row="{search_key}" '
@@ -174,6 +181,7 @@ def _fila_html(r: dict, dias_inv: int) -> str:
         f'data-tienda="{tienda_str}" '
         f'data-item="{r.get("ITEM","")}" '
         f'data-cajas="{cajas}" '
+        f'data-doh="{doh_str}" '
         f'data-prov="{str(r.get("PROVEEDOR","")).upper()}" '
         f'data-cat="{str(r.get("CATEGORIA","")).upper()}">'
         f'<td class="px-3 py-2">{_aprov_badge(aprov)}</td>'
@@ -481,10 +489,20 @@ PAGE = """<!DOCTYPE html>
       
       const onlyWithOrder = document.getElementById('bi-only-order').checked;
 
+      // Calcular techo de DOH
+      const diasInvInput = document.querySelector('input[name="dias_inv"]');
+      const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
+      const ceiling = diasInv * 2;
+
+      // Checkbox para ocultar exceeded DOH
+      const hideExceededEl = document.getElementById('bi-hide-exceeded-doh');
+      const hideExceeded = hideExceededEl ? hideExceededEl.checked : false;
+
       let visCount = 0;
       let totalCajas = 0;
       let stapleCajas = 0;
       let carruCajas = 0;
+      let exceededCount = 0;
       let itemsSet = new Set();
       let provsSet = new Set();
       const provCajas = {};
@@ -496,6 +514,15 @@ PAGE = """<!DOCTYPE html>
         const item = tr.dataset.item;
         const prov = tr.dataset.prov;
         const cajas = parseInt(tr.dataset.cajas) || 0;
+        
+        // Evaluar si supera el techo
+        const dohText = tr.dataset.doh;
+        const dohVal = dohText ? parseFloat(dohText) : NaN;
+        let isExceeded = false;
+        if (!isNaN(dohVal) && dohVal > ceiling) {
+          isExceeded = true;
+          exceededCount++;
+        }
 
         let show = true;
 
@@ -503,6 +530,7 @@ PAGE = """<!DOCTYPE html>
         if (aprovFilter !== 'ALL' && aprov !== aprovFilter) show = false;
         if (selectedCDs.length > 0 && !selectedCDs.includes(whse)) show = false;
         if (onlyWithOrder && cajas <= 0) show = false;
+        if (hideExceeded && isExceeded) show = false; // Excluir si el switch está ON
 
         tr.style.display = show ? '' : 'none';
 
@@ -550,6 +578,20 @@ PAGE = """<!DOCTYPE html>
               <span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">${cjs.toLocaleString()} cajas</span>
             </div>`;
           }).join('');
+        }
+      }
+
+      // Actualizar banner de alerta DOH
+      const banner = document.getElementById('doh-alert-banner');
+      const ceilingDaysLabel = document.getElementById('ceiling-days-label');
+      const exceededCountLabel = document.getElementById('exceeded-count-label');
+      if (banner) {
+        if (exceededCount > 0) {
+          banner.classList.remove('hidden');
+          if (ceilingDaysLabel) ceilingDaysLabel.textContent = ceiling;
+          if (exceededCountLabel) exceededCountLabel.textContent = exceededCount;
+        } else {
+          banner.classList.add('hidden');
         }
       }
     }
@@ -657,6 +699,25 @@ async def consultar(
     resumen      = _resumen_html(rows, dias_inv_int)
     tabla        = _tabla_html(rows, dias_inv_int)
 
+    alert_banner = """
+    <div id="doh-alert-banner" class="hidden bg-amber-50 border-2 border-amber-200 rounded-xl p-4 mb-4">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div class="flex items-center gap-2.5 text-amber-800 font-bold">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span class="text-sm">¡Alerta! Hay ítems que sobrepasan el techo de DOH (<span id="ceiling-days-label">30</span> días)</span>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+          <input type="checkbox" id="bi-hide-exceeded-doh" onchange="applyBiFilters()" class="sr-only peer">
+          <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+          <span class="ml-2 text-xs font-bold text-amber-950 select-none">Eliminar del reporte y exportación</span>
+        </label>
+      </div>
+      <p class="text-xs text-amber-700 mt-1.5">Se detectaron <span id="exceeded-count-label" class="font-extrabold text-amber-900">0</span> filas que sobrepasan el límite de DOH. Activa el interruptor para excluirlas de los KPIs, del resumen de proveedores, de la visualización y del archivo Excel.</p>
+    </div>
+    """
+
     # Agregar los botones de exportar y la cabecera interactiva del listado
     header_listado = f"""
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -695,4 +756,4 @@ async def consultar(
     </script>
     """
 
-    return resumen + header_listado + tabla + js_trigger
+    return resumen + alert_banner + header_listado + tabla + js_trigger
