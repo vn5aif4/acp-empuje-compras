@@ -174,17 +174,66 @@ def _fila_html(r: dict, dias_inv: int) -> str:
     except (ValueError, TypeError):
         doh_str = ""
 
+    # Extraer todos los valores de BQ para DATA set
+    item = r.get("ITEM", "")
+    cid = r.get("CID", "")
+    prov_name = str(r.get("PROVEEDOR", "")).upper()
+    desc = str(r.get("DESCRIPCION", "")).upper()
+    dept = r.get("DEPT", "")
+    cat = str(r.get("CATEGORIA", "")).upper()
+    whpk = r.get("WHPK_QTY", "")
+    pallet = r.get("PALLET_CAJAS", "")
+    oh = r.get("OH", "")
+    it = r.get("IT", "")
+    iw = r.get("IW", "")
+    oo = r.get("OO", "")
+    fcst = r.get("FCST_N1W", "")
+    stock_cd = r.get("STOCK_CD", "")
+    tuberia = r.get("TUBERIA_", "")
+    doh_actual = r.get("DOH_ACTUAL", "")
+    max_nd = r.get("MAX_ND_UNI", "")
+    gap_uni = r.get("GAP_UNI", "")
+    gap_cajas = r.get("GAP_CAJAS_BASE", "")
+    pallets_pedir = r.get("PALLETS_A_PEDIR", "")
+    exceso = r.get("EXCESO_CAJAS", "")
+    doh_tienda_val = r.get("DOH_TIENDA", "")
+    doh_cd_val = r.get("DOH_CD", "")
+    doh_cd_post_val = r.get("DOH_CD_POST", "")
+    dias_inv_val = r.get("dias_inv", "")
+
     return (
         f'<tr class="hover:bg-blue-50 border-b border-gray-100 text-xs font-normal" '
         f'data-row="{search_key}" '
         f'data-aprov="{aprov}" '
         f'data-whse="{whse_str}" '
         f'data-tienda="{tienda_str}" '
-        f'data-item="{r.get("ITEM","")}" '
+        f'data-item="{item}" '
         f'data-cajas="{cajas}" '
         f'data-doh="{doh_str}" '
-        f'data-prov="{str(r.get("PROVEEDOR","")).upper()}" '
-        f'data-cat="{str(r.get("CATEGORIA","")).upper()}">'
+        f'data-prov="{prov_name}" '
+        f'data-cat="{cat}" '
+        f'data-cid="{cid}" '
+        f'data-desc="{desc}" '
+        f'data-dept="{dept}" '
+        f'data-whpk="{whpk}" '
+        f'data-pallet="{pallet}" '
+        f'data-oh="{oh}" '
+        f'data-it="{it}" '
+        f'data-iw="{iw}" '
+        f'data-oo="{oo}" '
+        f'data-fcst="{fcst}" '
+        f'data-stock_cd="{stock_cd}" '
+        f'data-tuberia="{tuberia}" '
+        f'data-doh_actual="{doh_actual}" '
+        f'data-max_nd="{max_nd}" '
+        f'data-gap_uni="{gap_uni}" '
+        f'data-gap_cajas="{gap_cajas}" '
+        f'data-pallets_pedir="{pallets_pedir}" '
+        f'data-exceso="{exceso}" '
+        f'data-doh_tienda="{doh_tienda_val}" '
+        f'data-doh_cd="{doh_cd_val}" '
+        f'data-doh_cd_post="{doh_cd_post_val}" '
+        f'data-dias_inv="{dias_inv_val}">'
         f'<td class="px-3 py-2">{_aprov_badge(aprov)}</td>'
         f'<td class="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">{r.get("PROVEEDOR","")}</td>'
         f'<td class="px-3 py-2 text-gray-600 max-w-[200px] truncate" title="{r.get("DESCRIPCION","")}">'
@@ -688,24 +737,38 @@ PAGE = """<!DOCTYPE html>
               "*Cant Ord VNPK": cajas
             });
             
-            // Extraer las 12 columnas del HTML para la hoja DATA
-            const cells = tr.querySelectorAll('td');
-            if (cells.length >= 12) {
-              dataRows.push({
-                "Tipo": cells[0].textContent.trim(),
-                "Proveedor": cells[1].textContent.trim(),
-                "Descripción": cells[2].textContent.trim(),
-                "Ítem": cells[3].textContent.trim(),
-                "Dept": cells[4].textContent.trim(),
-                "Categoría": cells[5].textContent.trim(),
-                "Tienda": cells[6].textContent.trim(),
-                "CD": cells[7].textContent.trim(),
-                "Tubería": cells[8].textContent.trim(),
-                "Cajas a Pedir": cajas,
-                "DOH Tienda": cells[10].textContent.trim(),
-                "DOH CD Post": cells[11].textContent.trim()
-              });
-            }
+            // Extraer las 29 columnas completas de la base de datos para la hoja DATA
+            dataRows.push({
+              "Ítem": parseInt(tr.dataset.item) || tr.dataset.item,
+              "CID": parseInt(tr.dataset.cid) || tr.dataset.cid,
+              "Proveedor": tr.dataset.prov,
+              "Descripción": tr.dataset.desc,
+              "Dept": parseInt(tr.dataset.dept) || tr.dataset.dept,
+              "Categoría": tr.dataset.cat,
+              "Tipo": tr.dataset.aprov,
+              "WHPK Qty": parseInt(tr.dataset.whpk) || 0,
+              "Pallet Cajas": parseInt(tr.dataset.pallet) || 0,
+              "Tienda": parseInt(tr.dataset.tienda) || tr.dataset.tienda,
+              "CD (WHSE)": parseInt(tr.dataset.whse) || tr.dataset.whse,
+              "OH (Stock Tienda)": parseInt(tr.dataset.oh) || 0,
+              "In Transit (IT)": parseInt(tr.dataset.it) || 0,
+              "In Warehouse (IW)": parseInt(tr.dataset.iw) || 0,
+              "Open Orders (OO)": parseInt(tr.dataset.oo) || 0,
+              "FCST N1W": parseFloat(tr.dataset.fcst) || 0,
+              "Stock CD (Cajas)": parseInt(tr.dataset.stock_cd) || 0,
+              "Tubería": parseInt(tr.dataset.tuberia) || 0,
+              "DOH Actual": parseFloat(tr.dataset.doh_actual) || 0,
+              "Max ND Uni": parseInt(tr.dataset.max_nd) || 0,
+              "Gap Uni": parseInt(tr.dataset.gap_uni) || 0,
+              "Gap Cajas Base": parseInt(tr.dataset.gap_cajas) || 0,
+              "Cajas a Pedir": cajas,
+              "Pallets a Pedir": parseFloat(tr.dataset.pallets_pedir) || 0,
+              "Exceso Cajas": parseInt(tr.dataset.exceso) || 0,
+              "DOH Tienda": tr.dataset.doh_tienda,
+              "DOH CD": parseFloat(tr.dataset.doh_cd) || 0,
+              "DOH CD Post": parseFloat(tr.dataset.doh_cd_post) || 0,
+              "Días Inv. Objetivo": parseInt(tr.dataset.dias_inv) || 15
+            });
           }
         }
       });
@@ -732,20 +795,37 @@ PAGE = """<!DOCTYPE html>
         { wch: 15 }  // Cantidad
       ];
 
-      // Ajustar anchos segunda hoja DATA
+      // Ajustar anchos segunda hoja DATA (29 columnas)
       dataWorksheet['!cols'] = [
-        { wch: 12 }, // Tipo
+        { wch: 12 }, // Item
+        { wch: 12 }, // CID
         { wch: 25 }, // Proveedor
         { wch: 30 }, // Descripcion
-        { wch: 12 }, // Item
         { wch: 8 },  // Dept
         { wch: 20 }, // Categoria
+        { wch: 12 }, // Tipo
+        { wch: 10 }, // WHPK Qty
+        { wch: 12 }, // Pallet Cajas
         { wch: 10 }, // Tienda
         { wch: 10 }, // CD
+        { wch: 18 }, // OH Stock Tienda
+        { wch: 15 }, // IT
+        { wch: 15 }, // IW
+        { wch: 15 }, // OO
+        { wch: 12 }, // FCST N1W
+        { wch: 16 }, // Stock CD
         { wch: 10 }, // Tuberia
+        { wch: 12 }, // DOH Actual
+        { wch: 12 }, // Max ND Uni
+        { wch: 10 }, // Gap Uni
+        { wch: 15 }, // Gap Cajas Base
         { wch: 15 }, // Cajas a Pedir
+        { wch: 15 }, // Pallets a Pedir
+        { wch: 12 }, // Exceso Cajas
         { wch: 12 }, // DOH Tienda
-        { wch: 12 }  // DOH CD Post
+        { wch: 12 }, // DOH CD
+        { wch: 12 }, // DOH CD Post
+        { wch: 18 }  // Dias Inv. Objetivo
       ];
 
       const fileName = tipo === 'STAPLE' ? "Carga_Compras_Staple.xlsx" : "Carga_Compras_Carrusel.xlsx";
