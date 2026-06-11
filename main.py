@@ -14,11 +14,11 @@ app = FastAPI(title="ACP Empuje Compras")
 # ── Mapas de nombre ────────────────────────────────────────────────────────────
 
 CD_NAMES = {
-    6009: "6009 · Laguna",
-    6020: "6020 · Peñalolén",
-    6003: "6003 · Antofagasta",
-    6010: "6010 · Chillán",
-    6024: "6024 · Talca/Coronel",
+    6009: "6009",
+    6020: "6020",
+    6003: "6003",
+    6010: "6010",
+    6024: "6024",
 }
 
 
@@ -350,11 +350,11 @@ PAGE = """<!DOCTYPE html>
             <div>
               <label class="block text-xs font-semibold text-gray-500 mb-1.5">Filtro por CD</label>
               <div class="flex flex-wrap gap-1.5">
-                <button type="button" onclick="toggleCdPill(this)" data-cd="6009" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6009 Laguna</button>
-                <button type="button" onclick="toggleCdPill(this)" data-cd="6020" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6020 Peñalolén</button>
-                <button type="button" onclick="toggleCdPill(this)" data-cd="6003" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6003 Antof.</button>
-                <button type="button" onclick="toggleCdPill(this)" data-cd="6010" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6010 Chillán</button>
-                <button type="button" onclick="toggleCdPill(this)" data-cd="6024" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6024 Talca</button>
+                <button type="button" onclick="toggleCdPill(this)" data-cd="6009" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6009</button>
+                <button type="button" onclick="toggleCdPill(this)" data-cd="6020" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6020</button>
+                <button type="button" onclick="toggleCdPill(this)" data-cd="6003" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6003</button>
+                <button type="button" onclick="toggleCdPill(this)" data-cd="6010" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6010</button>
+                <button type="button" onclick="toggleCdPill(this)" data-cd="6024" class="cd-pill text-[10px] font-bold px-2 py-1 rounded-full border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50">6024</button>
               </div>
             </div>
 
