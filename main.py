@@ -297,11 +297,7 @@ PAGE = """<!DOCTYPE html>
                   class="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none">
               </div>
 
-              <div>
-                <label class="block text-xs font-semibold text-gray-500 mb-1">WHSE_NBR <span class="text-gray-400 font-normal">(opcional)</span></label>
-                <input type="text" name="whse_nbr" placeholder="Ej: 6009, 6020"
-                  class="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none">
-              </div>
+
             </div>
 
             <div class="pt-2">
@@ -371,21 +367,7 @@ PAGE = """<!DOCTYPE html>
               </label>
             </div>
 
-            <!-- Local text search -->
-            <div>
-              <label class="block text-xs font-semibold text-gray-500 mb-1">Buscador instantáneo</label>
-              <div class="relative">
-                <input id="filtro-local" type="text"
-                  placeholder="Proveedor, ítem, categoría..."
-                  oninput="applyBiFilters()"
-                  class="w-full rounded-lg border border-gray-300 pl-8 pr-3 py-1.5 text-xs font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                <div class="absolute left-2.5 top-2.5 text-gray-400">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-              </div>
-            </div>
+
 
           </div>
         </div>
@@ -443,7 +425,8 @@ PAGE = """<!DOCTYPE html>
       // 3. Reset toggle order
       document.getElementById('bi-only-order').checked = true;
       // 4. Reset search box
-      document.getElementById('filtro-local').value = '';
+      const fl = document.getElementById('filtro-local');
+      if (fl) fl.value = '';
       
       applyBiFilters();
     }
@@ -452,7 +435,8 @@ PAGE = """<!DOCTYPE html>
       const table = document.getElementById('tabla-resultados');
       if (!table) return;
 
-      const q = document.getElementById('filtro-local').value.toLowerCase();
+      const fl = document.getElementById('filtro-local');
+      const q = fl ? fl.value.toLowerCase() : '';
       const aprovFilter = document.querySelector('input[name="bi-aprov"]:checked').value;
       
       // Selected CDs
