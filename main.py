@@ -666,6 +666,8 @@ PAGE = """<!DOCTYPE html>
       }
 
       const rows = [];
+      const dataRows = [];
+      
       document.querySelectorAll('#tabla-resultados tbody tr').forEach(tr => {
         if (tr.style.display !== 'none') {
           const aprov = tr.dataset.aprov; // 'STAPLE' o 'CARRUSEL'
@@ -685,6 +687,25 @@ PAGE = """<!DOCTYPE html>
               "*Nodo Recibo": parseInt(nodo) || nodo,
               "*Cant Ord VNPK": cajas
             });
+            
+            // Extraer las 12 columnas del HTML para la hoja DATA
+            const cells = tr.querySelectorAll('td');
+            if (cells.length >= 12) {
+              dataRows.push({
+                "Tipo": cells[0].textContent.trim(),
+                "Proveedor": cells[1].textContent.trim(),
+                "Descripción": cells[2].textContent.trim(),
+                "Ítem": cells[3].textContent.trim(),
+                "Dept": cells[4].textContent.trim(),
+                "Categoría": cells[5].textContent.trim(),
+                "Tienda": cells[6].textContent.trim(),
+                "CD": cells[7].textContent.trim(),
+                "Tubería": cells[8].textContent.trim(),
+                "Cajas a Pedir": cajas,
+                "DOH Tienda": cells[10].textContent.trim(),
+                "DOH CD Post": cells[11].textContent.trim()
+              });
+            }
           }
         }
       });
@@ -699,12 +720,32 @@ PAGE = """<!DOCTYPE html>
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, tipo);
       
-      // Ajustar anchos
+      // Agregar la segunda hoja "DATA"
+      const dataWorksheet = XLSX.utils.json_to_sheet(dataRows);
+      XLSX.utils.book_append_sheet(workbook, dataWorksheet, "DATA");
+      
+      // Ajustar anchos primera hoja
       worksheet['!cols'] = [
         { wch: 18 }, // Motivo
         { wch: 14 }, // Articulo
         { wch: 14 }, // Nodo Recibo
         { wch: 15 }  // Cantidad
+      ];
+
+      // Ajustar anchos segunda hoja DATA
+      dataWorksheet['!cols'] = [
+        { wch: 12 }, // Tipo
+        { wch: 25 }, // Proveedor
+        { wch: 30 }, // Descripcion
+        { wch: 12 }, // Item
+        { wch: 8 },  // Dept
+        { wch: 20 }, // Categoria
+        { wch: 10 }, // Tienda
+        { wch: 10 }, // CD
+        { wch: 10 }, // Tuberia
+        { wch: 15 }, // Cajas a Pedir
+        { wch: 12 }, // DOH Tienda
+        { wch: 12 }  // DOH CD Post
       ];
 
       const fileName = tipo === 'STAPLE' ? "Carga_Compras_Staple.xlsx" : "Carga_Compras_Carrusel.xlsx";
