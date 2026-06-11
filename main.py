@@ -451,6 +451,35 @@ PAGE = """<!DOCTYPE html>
       }
     }
 
+    function ordenarExcedidosAlPrincipio() {
+      const tbody = document.querySelector('#tabla-resultados tbody');
+      if (!tbody) return;
+      const rowsArray = Array.from(tbody.querySelectorAll('tr'));
+      
+      const diasInvInput = document.querySelector('input[name="dias_inv"]');
+      const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
+      const ceiling = diasInv * 2;
+      
+      rowsArray.sort((a, b) => {
+        if (a.classList.contains('manually-excluded')) return 1;
+        if (b.classList.contains('manually-excluded')) return -1;
+        
+        const dohAText = a.dataset.doh;
+        const dohBText = b.dataset.doh;
+        const dohA = dohAText ? parseFloat(dohAText) : 0;
+        const dohB = dohBText ? parseFloat(dohBText) : 0;
+        
+        const exceededA = dohA > ceiling ? 1 : 0;
+        const exceededB = dohB > ceiling ? 1 : 0;
+        
+        if (exceededA !== exceededB) {
+          return exceededB - exceededA;
+        }
+        return dohB - dohA;
+      });
+      rowsArray.forEach(row => tbody.appendChild(row));
+    }
+
     // Mostrar/ocultar el overlay de carga usando eventos de HTMX
     document.addEventListener('htmx:configRequest', function() {
       document.getElementById('loading-overlay').classList.remove('hidden');
@@ -490,6 +519,9 @@ PAGE = """<!DOCTYPE html>
     }
 
     function applyBiFilters() {
+      // Ordenar filas con exceso al principio antes de filtrar y contar
+      ordenarExcedidosAlPrincipio();
+
       const table = document.getElementById('tabla-resultados');
       if (!table) return;
 
@@ -541,7 +573,6 @@ PAGE = """<!DOCTYPE html>
         let isExceeded = false;
         if (!isNaN(dohVal) && dohVal > ceiling) {
           isExceeded = true;
-          exceededCount++;
         }
 
         let show = true;
@@ -550,7 +581,15 @@ PAGE = """<!DOCTYPE html>
         if (aprovFilter !== 'ALL' && aprov !== aprovFilter) show = false;
         if (selectedCDs.length > 0 && !selectedCDs.includes(whse)) show = false;
         if (onlyWithOrder && cajas <= 0) show = false;
-        if (hideExceeded && isExceeded) show = false; // Excluir si el switch está ON
+
+        // Solo contamos como excedido si pasa los filtros previos de visualización de la tabla
+        if (show && isExceeded) {
+          exceededCount++;
+        }
+
+        if (show && hideExceeded && isExceeded) {
+          show = false; // Excluir si el switch está ON
+        }
 
         tr.style.display = show ? '' : 'none';
 
