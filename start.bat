@@ -1,4 +1,4 @@
 @echo off
 cd /d %~dp0
 echo Iniciando Proyecto Compras...
-.venv\Scripts\uvicorn.exe main:app --host 0.0.0.0 --port 8008 --reload
+.venv\Scripts\uvicorn.exe main:app --host 0.0.0.0 --port 8050 --reload
