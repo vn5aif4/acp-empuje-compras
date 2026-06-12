@@ -24,7 +24,7 @@ CD_NAMES = {
 
 # ── Badges HTML ────────────────────────────────────────────────────────────────
 
-def _doh_badge(doh, dias_inv: int) -> str:
+def _doh_badge(doh, dias_inv: int, aprov: str) -> str:
     if doh is None or str(doh).strip() == "" or str(doh) == "None":
         return '<span class="text-gray-300 text-xs">—</span>'
     s = str(doh).strip()
@@ -35,9 +35,10 @@ def _doh_badge(doh, dias_inv: int) -> str:
     try:
         v = float(s)
         lim = float(dias_inv)
+        ceiling = lim + 2 if aprov == "STAPLE" else lim * 2
         if v <= lim:
             cls = "bg-emerald-100 text-emerald-800"
-        elif v <= lim * 2:
+        elif v <= ceiling:
             cls = "bg-amber-100 text-amber-800"
         else:
             cls = "bg-red-100 text-red-800"
@@ -247,8 +248,8 @@ def _fila_html(r: dict, dias_inv: int) -> str:
         f'<td class="px-3 py-2 text-center whitespace-nowrap">{cd_label}</td>'
         f'<td class="px-3 py-2 text-right font-medium">{_num(r.get("TUBERIA_"))}</td>'
         f'<td class="px-3 py-2 text-right {cajas_cls}">{_num(cajas)}</td>'
-        f'<td class="px-3 py-2 text-center">{_doh_badge(doh_tienda, dias_inv)}</td>'
-        f'<td class="px-3 py-2 text-center">{_doh_badge(doh_cd_post, dias_inv)}</td>'
+        f'<td class="px-3 py-2 text-center">{_doh_badge(doh_tienda, dias_inv, aprov)}</td>'
+        f'<td class="px-3 py-2 text-center">{_doh_badge(doh_cd_post, dias_inv, aprov)}</td>'
         f'<td class="px-3 py-2 text-center">'
         f'  <button onclick="eliminarFila(this)" class="text-red-500 hover:text-red-700 hover:scale-115 transition-all p-1" title="Eliminar de la consulta">'
         f'    <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">'
@@ -509,19 +510,23 @@ PAGE = """<!DOCTYPE html>
       
       const diasInvInput = document.querySelector('input[name="dias_inv"]');
       const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
-      const ceiling = diasInv * 2;
       
       rowsArray.sort((a, b) => {
         if (a.classList.contains('manually-excluded')) return 1;
         if (b.classList.contains('manually-excluded')) return -1;
+        
+        const aprovA = a.dataset.aprov;
+        const aprovB = b.dataset.aprov;
+        const ceilingA = aprovA === 'STAPLE' ? (diasInv + 2) : (diasInv * 2);
+        const ceilingB = aprovB === 'STAPLE' ? (diasInv + 2) : (diasInv * 2);
         
         const dohAText = a.dataset.doh;
         const dohBText = b.dataset.doh;
         const dohA = dohAText ? parseFloat(dohAText) : 0;
         const dohB = dohBText ? parseFloat(dohBText) : 0;
         
-        const exceededA = dohA > ceiling ? 1 : 0;
-        const exceededB = dohB > ceiling ? 1 : 0;
+        const exceededA = dohA > ceilingA ? 1 : 0;
+        const exceededB = dohB > ceilingB ? 1 : 0;
         
         if (exceededA !== exceededB) {
           return exceededB - exceededA;
@@ -588,10 +593,9 @@ PAGE = """<!DOCTYPE html>
       
       const onlyWithOrder = document.getElementById('bi-only-order').checked;
 
-      // Calcular techo de DOH
+      // Obtener dias de inventario objetivo
       const diasInvInput = document.querySelector('input[name="dias_inv"]');
       const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
-      const ceiling = diasInv * 2;
 
       // Checkbox para ocultar exceeded DOH
       const hideExceededEl = document.getElementById('bi-hide-exceeded-doh');
@@ -618,11 +622,14 @@ PAGE = """<!DOCTYPE html>
         const prov = tr.dataset.prov;
         const cajas = parseInt(tr.dataset.cajas) || 0;
         
+        // Calcular techo según flujo de la fila (STAPLE es flujo continuo = objetivo + 2, CARRUSEL es objetivo * 2)
+        const rowCeiling = aprov === 'STAPLE' ? (diasInv + 2) : (diasInv * 2);
+
         // Evaluar si supera el techo
         const dohText = tr.dataset.doh;
         const dohVal = dohText ? parseFloat(dohText) : NaN;
         let isExceeded = false;
-        if (!isNaN(dohVal) && dohVal > ceiling) {
+        if (!isNaN(dohVal) && dohVal > rowCeiling) {
           isExceeded = true;
         }
 
@@ -657,6 +664,56 @@ PAGE = """<!DOCTYPE html>
           if (cajas > 0) {
             provCajas[prov] = (provCajas[prov] || 0) + cajas;
           }
+        }
+      });
+
+      // Actualizar KPIs de forma reactiva
+      const kpiFilas = document.getElementById('kpi-filas');
+      const kpiItems = document.getElementById('kpi-items');
+      const kpiProvs = document.getElementById('kpi-provs');
+      const kpiCajas = document.getElementById('kpi-cajas');
+      const kpiStaple = document.getElementById('kpi-staple');
+      const kpiCarrusel = document.getElementById('kpi-carrusel');
+
+      if (kpiFilas) kpiFilas.textContent = visCount.toLocaleString();
+      if (kpiItems) kpiItems.textContent = itemsSet.size.toLocaleString();
+      if (kpiProvs) kpiProvs.textContent = provsSet.size.toLocaleString();
+      if (kpiCajas) kpiCajas.textContent = totalCajas.toLocaleString();
+      if (kpiStaple) kpiStaple.textContent = stapleCajas.toLocaleString();
+      if (kpiCarrusel) kpiCarrusel.textContent = carruCajas.toLocaleString();
+
+      // Actualizar resumen de proveedores
+      const sortedProvs = Object.entries(provCajas).sort((a, b) => b[1] - a[1]);
+      const container = document.getElementById('prov-summary-container');
+      if (container) {
+        if (sortedProvs.length === 0) {
+          container.innerHTML = '<span class="text-gray-400 font-medium">Ningún proveedor con pedido visible.</span>';
+        } else {
+          container.innerHTML = sortedProvs.map(([prov, cjs]) => {
+            return `<div class="bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-100 flex items-center gap-2">
+              <span class="font-bold text-gray-800">${prov}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">${cjs.toLocaleString()} cajas</span>
+            </div>`;
+          }).join('');
+        }
+      }
+
+      // Actualizar banner de alerta DOH
+      const banner = document.getElementById('doh-alert-banner');
+      const ceilingDaysLabel = document.getElementById('ceiling-days-label');
+      const exceededCountLabel = document.getElementById('exceeded-count-label');
+      if (banner) {
+        if (exceededCount > 0) {
+          banner.classList.remove('hidden');
+          if (ceilingDaysLabel) {
+            ceilingDaysLabel.textContent = `+2 días para STAPLE / *2 para CARRUSEL`;
+          }
+          if (exceededCountLabel) exceededCountLabel.textContent = exceededCount;
+        } else {
+          banner.classList.add('hidden');
+        }
+      }
+    }
         }
       });
 
