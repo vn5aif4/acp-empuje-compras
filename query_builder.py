@@ -321,6 +321,7 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     import math
     from collections import defaultdict
+    import copy
 
     # Agrupar filas por (PROVEEDOR, WHSE_NBR) para STAPLE
     groups = defaultdict(list)
@@ -341,6 +342,17 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if min_pallets <= 0:
             continue
 
+        # Capacidad de camion completo estandar es 60 pallets
+        full_truck_capacity = 60
+        
+        # Dias objetivo y techo
+        dias_inv = 15
+        for r in group_rows:
+            if r.get("dias_inv") is not None:
+                dias_inv = int(r.get("dias_inv"))
+                break
+        ceiling = dias_inv * 2
+
         # Calcular pallets actuales
         total_pallets = 0.0
         eligible_rows = []
@@ -355,17 +367,27 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if pallet_cajas > 0:
                 total_pallets += cajas / pallet_cajas
 
-        # Si hay pedido pero no alcanza el minimo por camion
-        if 0 < total_pallets < min_pallets and eligible_rows:
-            deficit = min_pallets - total_pallets
+        if total_pallets <= 0 or not eligible_rows:
+            continue
+
+        # Calcular el remanente en el último camión
+        remaining_pallets = total_pallets % full_truck_capacity
+
+        # Si el remanente es menor al minimo de pallets por camion (TLO)
+        if 0 < remaining_pallets < min_pallets:
+            deficit = min_pallets - remaining_pallets
             pallets_to_add = int(math.ceil(deficit))
             
-            # Reparto Greedy de pallets uno por uno nivelando el DOH
+            # --- EVALUACION DE OPCION 1: COMPLETAR (ROUND UP) ---
+            # Hacemos una simulacion en una copia de las filas
+            sim_rows = copy.deepcopy(eligible_rows)
+            safe_to_add = True
+            
+            # Reparto Greedy simulado
             for _ in range(pallets_to_add):
                 best_row = None
                 best_doh = float("inf")
-                
-                for r in eligible_rows:
+                for r in sim_rows:
                     cajas = int(r.get("CAJAS_A_PEDIR") or 0)
                     stock_cd = int(r.get("STOCK_CD") or 0)
                     whpk = int(r.get("WHPK_QTY") or 0)
@@ -379,9 +401,54 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if best_row:
                     pallet_cajas = int(best_row.get("PALLET_CAJAS") or 0)
                     best_row["CAJAS_A_PEDIR"] = int(best_row.get("CAJAS_A_PEDIR") or 0) + pallet_cajas
-                    best_row["INCREMENTO_TLO_CAJAS"] = int(best_row.get("INCREMENTO_TLO_CAJAS") or 0) + pallet_cajas
+                    
+                    # Verificar si al agregar este pallet, el nuevo DOH post-compra excede el techo
+                    stock_cd = int(best_row.get("STOCK_CD") or 0)
+                    whpk = int(best_row.get("WHPK_QTY") or 0)
+                    fcst_cd_sum = float(best_row.get("fcst_cd_sum") or 0.0)
+                    new_doh = (stock_cd + best_row["CAJAS_A_PEDIR"]) * whpk * 7.0 / fcst_cd_sum
+                    if new_doh > ceiling:
+                        safe_to_add = False
+                        break
+            
+            # Si completar el camion es SEGURO (ningun item supera el techo de DOH)
+            if safe_to_add:
+                # Aplicamos la simulación al grupo real
+                for i, r in enumerate(eligible_rows):
+                    added_cajas = sim_rows[i]["CAJAS_A_PEDIR"] - int(r.get("CAJAS_A_PEDIR") or 0)
+                    if added_cajas > 0:
+                        r["CAJAS_A_PEDIR"] = sim_rows[i]["CAJAS_A_PEDIR"]
+                        r["INCREMENTO_TLO_CAJAS"] = added_cajas
+            else:
+                # --- OPCION 2: RECORTAR (ROUND DOWN) ---
+                # Si no es seguro completar, recortamos el camión incompleto
+                pallets_to_remove = int(math.ceil(remaining_pallets))
+                
+                for _ in range(pallets_to_remove):
+                    best_row = None
+                    best_doh = -float("inf")
+                    
+                    for r in eligible_rows:
+                        cajas = int(r.get("CAJAS_A_PEDIR") or 0)
+                        pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
+                        stock_cd = int(r.get("STOCK_CD") or 0)
+                        whpk = int(r.get("WHPK_QTY") or 0)
+                        fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+                        
+                        # Solo podemos quitar si ya tenemos cajas pedidas
+                        if cajas >= pallet_cajas:
+                            doh = (stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum
+                            if doh > best_doh:
+                                best_doh = doh
+                                best_row = r
+                    
+                    if best_row:
+                        pallet_cajas = int(best_row.get("PALLET_CAJAS") or 0)
+                        best_row["CAJAS_A_PEDIR"] = int(best_row.get("CAJAS_A_PEDIR") or 0) - pallet_cajas
+                        # Marcamos como incremento negativo (o simplemente restamos)
+                        best_row["INCREMENTO_TLO_CAJAS"] = int(best_row.get("INCREMENTO_TLO_CAJAS") or 0) - pallet_cajas
 
-            # Recalcular DOH_CD_POST y PALLETS_A_PEDIR para el grupo
+            # Recalcular DOH_CD_POST y PALLETS_A_PEDIR para el grupo finalizado
             item_cajas = {}
             for r in group_rows:
                 rn = r.get("rn", 1)
