@@ -484,18 +484,31 @@ def ejecutar_query(
     """Retorna (filas, sql_usado). Lanza Exception si BQ falla."""
     creds   = _get_credentials()
     proyecto = billing_project.strip() or _billing_project()
+    
+    # Clonamos filtros para forzar solo_con_pedido = False en BigQuery
+    # Esto permite que el optimizador TLO vea todos los productos del proveedor para repartir pallets de forma equilibrada
+    f_internal = FiltrosCompras(
+        dias_inv=f.dias_inv,
+        dept=f.dept,
+        categoria=f.categoria,
+        proveedor=f.proveedor,
+        items=f.items,
+        whse_nbr=f.whse_nbr,
+        solo_con_pedido=False
+    )
+    
     client   = bigquery.Client(project=proyecto, credentials=creds)
-    sql      = construir_query(f)
+    sql      = construir_query(f_internal)
 
     params: list = []
-    if f.categoria.strip():
-        params.append(bigquery.ScalarQueryParameter("categoria", "STRING", f.categoria.strip()))
-    if f.proveedor.strip():
-        params.append(bigquery.ScalarQueryParameter("proveedor", "STRING", f.proveedor.strip().upper()))
-    items_list = _lista_int(f.items)
+    if f_internal.categoria.strip():
+        params.append(bigquery.ScalarQueryParameter("categoria", "STRING", f_internal.categoria.strip()))
+    if f_internal.proveedor.strip():
+        params.append(bigquery.ScalarQueryParameter("proveedor", "STRING", f_internal.proveedor.strip().upper()))
+    items_list = _lista_int(f_internal.items)
     if items_list:
         params.append(bigquery.ArrayQueryParameter("items", "INT64", items_list))
-    whse_list = _lista_int(f.whse_nbr)
+    whse_list = _lista_int(f_internal.whse_nbr)
     if whse_list:
         params.append(bigquery.ArrayQueryParameter("whse_list", "INT64", whse_list))
 
@@ -506,4 +519,9 @@ def ejecutar_query(
     # Aplicar optimización de camión mínimo (TLO) para Staple
     rows = _aplicar_tlo_staple(rows)
     
+    # Si el usuario pidió filtrar (solo_con_pedido es True por defecto en main.py),
+    # filtramos las filas de forma limpia en Python después de optimizar el camión
+    if f.solo_con_pedido:
+        rows = [r for r in rows if int(r.get("CAJAS_A_PEDIR") or 0) > 0]
+        
     return rows, sql
