@@ -175,7 +175,7 @@ cajas AS (
               WHEN FCST_N1W > 0
                AND DOH_CD <= dias_inv * 2
                AND (TUBERIA_ + GAP_CAJAS_BASE * WHPK_QTY) * 7
-                   / FCST_N1W <= dias_inv * 2
+                   / FCST_N1W <= dias_inv + 2
               THEN GAP_CAJAS_BASE
               ELSE 0
             END
