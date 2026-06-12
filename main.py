@@ -522,8 +522,10 @@ PAGE = """<!DOCTYPE html>
         
         const dohAText = a.dataset.doh;
         const dohBText = b.dataset.doh;
-        const dohA = dohAText ? parseFloat(dohAText) : 0;
-        const dohB = dohBText ? parseFloat(dohBText) : 0;
+        let dohA = parseFloat(dohAText);
+        if (isNaN(dohA)) dohA = 0;
+        let dohB = parseFloat(dohBText);
+        if (isNaN(dohB)) dohB = 0;
         
         const exceededA = dohA > ceilingA ? 1 : 0;
         const exceededB = dohB > ceilingB ? 1 : 0;
