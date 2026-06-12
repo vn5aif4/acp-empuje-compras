@@ -286,6 +286,128 @@ def _get_credentials():
     return google.oauth2.credentials.Credentials(token=token)
 
 
+# ── TLO Truckload Optimization ──────────────────────────────────────────────────
+
+def _cargar_tlos() -> dict[str, dict[str, int]]:
+    tlos = {}
+    tlo_path = r"C:\Users\vn5aif4\Downloads\TLO.xlsx"
+    if not os.path.exists(tlo_path):
+        return tlos
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(tlo_path, read_only=True)
+        sheet = wb.active
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if len(row) >= 3:
+                prov, tlo, pallets = row[0], row[1], row[2]
+                if prov:
+                    tlos[str(prov).strip().upper()] = {
+                        "tlo": int(tlo or 0),
+                        "pallets": int(pallets or 0)
+                    }
+    except Exception as e:
+        print("Error al cargar TLO.xlsx:", e)
+    return tlos
+
+
+def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Inicializar columnas para todas las filas
+    for r in rows:
+        r["INCREMENTO_TLO_CAJAS"] = 0
+
+    tlos = _cargar_tlos()
+    if not tlos:
+        return rows
+
+    import math
+    from collections import defaultdict
+
+    # Agrupar filas por (PROVEEDOR, WHSE_NBR) para STAPLE
+    groups = defaultdict(list)
+    for r in rows:
+        aprov = str(r.get("APROV", "")).upper()
+        if aprov == "STAPLE":
+            prov = str(r.get("PROVEEDOR", "")).strip().upper()
+            whse = r.get("WHSE_NBR")
+            if prov and whse is not None:
+                groups[(prov, int(whse))].append(r)
+
+    for (prov, whse), group_rows in groups.items():
+        tlo_rule = tlos.get(prov)
+        if not tlo_rule or tlo_rule.get("tlo") != 1:
+            continue
+        
+        min_pallets = tlo_rule.get("pallets", 0)
+        if min_pallets <= 0:
+            continue
+
+        # Calcular pallets actuales
+        total_pallets = 0.0
+        eligible_rows = []
+        for r in group_rows:
+            cajas = int(r.get("CAJAS_A_PEDIR") or 0)
+            pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
+            rn = r.get("rn", 1)
+            fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+            
+            if rn == 1 and pallet_cajas > 0 and fcst_cd_sum > 0:
+                eligible_rows.append(r)
+            if pallet_cajas > 0:
+                total_pallets += cajas / pallet_cajas
+
+        # Si hay pedido pero no alcanza el minimo por camion
+        if 0 < total_pallets < min_pallets and eligible_rows:
+            deficit = min_pallets - total_pallets
+            pallets_to_add = int(math.ceil(deficit))
+            
+            # Reparto Greedy de pallets uno por uno nivelando el DOH
+            for _ in range(pallets_to_add):
+                best_row = None
+                best_doh = float("inf")
+                
+                for r in eligible_rows:
+                    cajas = int(r.get("CAJAS_A_PEDIR") or 0)
+                    stock_cd = int(r.get("STOCK_CD") or 0)
+                    whpk = int(r.get("WHPK_QTY") or 0)
+                    fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+                    
+                    doh = (stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum
+                    if doh < best_doh:
+                        best_doh = doh
+                        best_row = r
+                
+                if best_row:
+                    pallet_cajas = int(best_row.get("PALLET_CAJAS") or 0)
+                    best_row["CAJAS_A_PEDIR"] = int(best_row.get("CAJAS_A_PEDIR") or 0) + pallet_cajas
+                    best_row["INCREMENTO_TLO_CAJAS"] = int(best_row.get("INCREMENTO_TLO_CAJAS") or 0) + pallet_cajas
+
+            # Recalcular DOH_CD_POST y PALLETS_A_PEDIR para el grupo
+            item_cajas = {}
+            for r in group_rows:
+                rn = r.get("rn", 1)
+                item = r.get("ITEM")
+                if rn == 1:
+                    item_cajas[item] = int(r.get("CAJAS_A_PEDIR") or 0)
+
+            for r in group_rows:
+                item = r.get("ITEM")
+                cajas = item_cajas.get(item, 0)
+                pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
+                
+                if pallet_cajas > 0:
+                    r["PALLETS_A_PEDIR"] = round(cajas / pallet_cajas, 2)
+                else:
+                    r["PALLETS_A_PEDIR"] = 0.0
+                
+                stock_cd = int(r.get("STOCK_CD") or 0)
+                whpk = int(r.get("WHPK_QTY") or 0)
+                fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+                if fcst_cd_sum > 0:
+                    r["DOH_CD_POST"] = round((stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum, 1)
+
+    return rows
+
+
 # ── Ejecución ──────────────────────────────────────────────────────────────────
 
 def ejecutar_query(
@@ -313,4 +435,8 @@ def ejecutar_query(
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     job        = client.query(sql, job_config=job_config)
     rows       = [dict(r) for r in job.result()]
+    
+    # Aplicar optimización de camión mínimo (TLO) para Staple
+    rows = _aplicar_tlo_staple(rows)
+    
     return rows, sql

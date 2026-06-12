@@ -200,6 +200,7 @@ def _fila_html(r: dict, dias_inv: int) -> str:
     doh_cd_val = r.get("DOH_CD", "")
     doh_cd_post_val = r.get("DOH_CD_POST", "")
     dias_inv_val = r.get("dias_inv", "")
+    tlo_increment = r.get("INCREMENTO_TLO_CAJAS", 0)
 
     return (
         f'<tr class="hover:bg-blue-50 border-b border-gray-100 text-xs font-normal" '
@@ -233,7 +234,8 @@ def _fila_html(r: dict, dias_inv: int) -> str:
         f'data-doh_tienda="{doh_tienda_val}" '
         f'data-doh_cd="{doh_cd_val}" '
         f'data-doh_cd_post="{doh_cd_post_val}" '
-        f'data-dias_inv="{dias_inv_val}">'
+        f'data-dias_inv="{dias_inv_val}" '
+        f'data-tlo_increment="{tlo_increment}">'
         f'<td class="px-3 py-2">{_aprov_badge(aprov)}</td>'
         f'<td class="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">{r.get("PROVEEDOR","")}</td>'
         f'<td class="px-3 py-2 text-gray-600 max-w-[200px] truncate" title="{r.get("DESCRIPCION","")}">'
@@ -767,7 +769,8 @@ PAGE = """<!DOCTYPE html>
               "DOH Tienda": tr.dataset.doh_tienda,
               "DOH CD": parseFloat(tr.dataset.doh_cd) || 0,
               "DOH CD Post": parseFloat(tr.dataset.doh_cd_post) || 0,
-              "Días Inv. Objetivo": parseInt(tr.dataset.dias_inv) || 15
+              "Días Inv. Objetivo": parseInt(tr.dataset.dias_inv) || 15,
+              "Incremento TLO (Cajas)": parseInt(tr.dataset.tlo_increment) || 0
             });
           }
         }
@@ -825,7 +828,8 @@ PAGE = """<!DOCTYPE html>
         { wch: 12 }, // DOH Tienda
         { wch: 12 }, // DOH CD
         { wch: 12 }, // DOH CD Post
-        { wch: 18 }  // Dias Inv. Objetivo
+        { wch: 18 }, // Dias Inv. Objetivo
+        { wch: 22 }  // Incremento TLO Cajas
       ];
 
       const fileName = tipo === 'STAPLE' ? "Carga_Compras_Staple.xlsx" : "Carga_Compras_Carrusel.xlsx";
