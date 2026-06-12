@@ -560,8 +560,7 @@ PAGE = """<!DOCTYPE html>
         btn.classList.remove('active', 'bg-blue-600', 'text-white', 'border-blue-600');
         btn.classList.add('bg-white', 'text-gray-600', 'border-gray-200');
       });
-      // 3. Reset toggle order
-      document.getElementById('bi-only-order').checked = true;
+      // 3. Reset toggle order (already removed)
       // 4. Reset search box
       const fl = document.getElementById('filtro-local');
       if (fl) fl.value = '';
@@ -586,7 +585,7 @@ PAGE = """<!DOCTYPE html>
         selectedCDs.push(btn.dataset.cd);
       });
       
-      const onlyWithOrder = document.getElementById('bi-only-order').checked;
+      const onlyWithOrder = true;
 
       // Obtener dias de inventario objetivo
       const diasInvInput = document.querySelector('input[name="dias_inv"]');
