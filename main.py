@@ -35,7 +35,7 @@ def _doh_badge(doh, dias_inv: int, aprov: str) -> str:
     try:
         v = float(s)
         lim = float(dias_inv)
-        ceiling = lim + 2 if aprov == "STAPLE" else lim * 2
+        ceiling = lim + 2 if aprov == "CARRUSEL" else lim * 2
         if v <= lim:
             cls = "bg-emerald-100 text-emerald-800"
         elif v <= ceiling:
@@ -517,8 +517,8 @@ PAGE = """<!DOCTYPE html>
         
         const aprovA = a.dataset.aprov;
         const aprovB = b.dataset.aprov;
-        const ceilingA = aprovA === 'STAPLE' ? (diasInv + 2) : (diasInv * 2);
-        const ceilingB = aprovB === 'STAPLE' ? (diasInv + 2) : (diasInv * 2);
+        const ceilingA = aprovA === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
+        const ceilingB = aprovB === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
         
         const dohAText = a.dataset.doh;
         const dohBText = b.dataset.doh;
@@ -622,8 +622,8 @@ PAGE = """<!DOCTYPE html>
         const prov = tr.dataset.prov;
         const cajas = parseInt(tr.dataset.cajas) || 0;
         
-        // Calcular techo según flujo de la fila (STAPLE es flujo continuo = objetivo + 2, CARRUSEL es objetivo * 2)
-        const rowCeiling = aprov === 'STAPLE' ? (diasInv + 2) : (diasInv * 2);
+        // Calcular techo según flujo de la fila (CARRUSEL es flujo continuo = objetivo + 2, STAPLE es objetivo * 2)
+        const rowCeiling = aprov === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
 
         // Evaluar si supera el techo
         const dohText = tr.dataset.doh;
@@ -706,7 +706,7 @@ PAGE = """<!DOCTYPE html>
         if (exceededCount > 0) {
           banner.classList.remove('hidden');
           if (ceilingDaysLabel) {
-            ceilingDaysLabel.textContent = `+2 días para STAPLE / *2 para CARRUSEL`;
+            ceilingDaysLabel.textContent = `+2 días para CARRUSEL / *2 para STAPLE`;
           }
           if (exceededCountLabel) exceededCountLabel.textContent = exceededCount;
         } else {
