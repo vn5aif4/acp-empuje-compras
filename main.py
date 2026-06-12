@@ -460,7 +460,7 @@ PAGE = """<!DOCTYPE html>
               </div>
             </div>
 
-
+            <!-- Only with order toggle has been removed, backend always filters only rows with orders -->
 
 
 
@@ -497,42 +497,38 @@ PAGE = """<!DOCTYPE html>
     }
 
     function ordenarExcedidosAlPrincipio() {
-      try {
-        const tbody = document.querySelector('#tabla-resultados tbody');
-        if (!tbody) return;
-        const rowsArray = Array.from(tbody.querySelectorAll('tr'));
+      const tbody = document.querySelector('#tabla-resultados tbody');
+      if (!tbody) return;
+      const rowsArray = Array.from(tbody.querySelectorAll('tr'));
+      
+      const diasInvInput = document.querySelector('input[name="dias_inv"]');
+      const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
+      
+      rowsArray.sort((a, b) => {
+        if (a.classList.contains('manually-excluded')) return 1;
+        if (b.classList.contains('manually-excluded')) return -1;
         
-        const diasInvInput = document.querySelector('input[name="dias_inv"]');
-        const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
+        const aprovA = a.dataset.aprov;
+        const aprovB = b.dataset.aprov;
+        const ceilingA = aprovA === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
+        const ceilingB = aprovB === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
         
-        rowsArray.sort((a, b) => {
-          if (a.classList.contains('manually-excluded')) return 1;
-          if (b.classList.contains('manually-excluded')) return -1;
-          
-          const aprovA = a.dataset.aprov;
-          const aprovB = b.dataset.aprov;
-          const ceilingA = aprovA === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
-          const ceilingB = aprovB === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
-          
-          const dohAText = a.dataset.doh;
-          const dohBText = b.dataset.doh;
-          let dohA = parseFloat(dohAText);
-          if (isNaN(dohA)) dohA = 0;
-          let dohB = parseFloat(dohBText);
-          if (isNaN(dohB)) dohB = 0;
-          
-          const exceededA = dohA > ceilingA ? 1 : 0;
-          const exceededB = dohB > ceilingB ? 1 : 0;
-          
-          if (exceededA !== exceededB) {
-            return exceededB - exceededA;
-          }
-          return dohB - dohA;
-        });
-        rowsArray.forEach(row => tbody.appendChild(row));
-      } catch (err) {
-        console.error("ERROR EN SCRIPT ordenarExcedidosAlPrincipio: ", err);
-      }
+        const dohAText = a.dataset.doh;
+        const dohBText = b.dataset.doh;
+        let dohA = parseFloat(dohAText);
+        if (isNaN(dohA)) dohA = 0;
+        let dohB = parseFloat(dohBText);
+        if (isNaN(dohB)) dohB = 0;
+        
+        const exceededA = dohA > ceilingA ? 1 : 0;
+        const exceededB = dohB > ceilingB ? 1 : 0;
+        
+        if (exceededA !== exceededB) {
+          return exceededB - exceededA;
+        }
+        return dohB - dohA;
+      });
+      rowsArray.forEach(row => tbody.appendChild(row));
     }
 
     // Mostrar/ocultar el overlay de carga usando eventos de HTMX
@@ -564,7 +560,9 @@ PAGE = """<!DOCTYPE html>
         btn.classList.remove('active', 'bg-blue-600', 'text-white', 'border-blue-600');
         btn.classList.add('bg-white', 'text-gray-600', 'border-gray-200');
       });
-      // 3. Reset search box
+      // 3. Reset toggle order
+      document.getElementById('bi-only-order').checked = true;
+      // 4. Reset search box
       const fl = document.getElementById('filtro-local');
       if (fl) fl.value = '';
       
@@ -572,148 +570,191 @@ PAGE = """<!DOCTYPE html>
     }
 
     function applyBiFilters() {
-      try {
-        // Ordenar filas con exceso al principio antes de filtrar y contar
-        ordenarExcedidosAlPrincipio();
+      // Ordenar filas con exceso al principio antes de filtrar y contar
+      ordenarExcedidosAlPrincipio();
 
-        const table = document.getElementById('tabla-resultados');
-        if (!table) return;
+      const table = document.getElementById('tabla-resultados');
+      if (!table) return;
 
-        const fl = document.getElementById('filtro-local');
-        const q = fl ? fl.value.toLowerCase() : '';
-        const aprovFilter = document.querySelector('input[name="bi-aprov"]:checked').value;
+      const fl = document.getElementById('filtro-local');
+      const q = fl ? fl.value.toLowerCase() : '';
+      const aprovFilter = document.querySelector('input[name="bi-aprov"]:checked').value;
+      
+      // Selected CDs
+      const selectedCDs = [];
+      document.querySelectorAll('.cd-pill.active').forEach(btn => {
+        selectedCDs.push(btn.dataset.cd);
+      });
+      
+      const onlyWithOrder = document.getElementById('bi-only-order').checked;
+
+      // Obtener dias de inventario objetivo
+      const diasInvInput = document.querySelector('input[name="dias_inv"]');
+      const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
+
+      // Checkbox para ocultar exceeded DOH
+      const hideExceededEl = document.getElementById('bi-hide-exceeded-doh');
+      const hideExceeded = hideExceededEl ? hideExceededEl.checked : false;
+
+      let visCount = 0;
+      let totalCajas = 0;
+      let stapleCajas = 0;
+      let carruCajas = 0;
+      let exceededCount = 0;
+      let itemsSet = new Set();
+      let provsSet = new Set();
+      const provCajas = {};
+
+      document.querySelectorAll('#tabla-resultados tbody tr').forEach(tr => {
+        if (tr.classList.contains('manually-excluded')) {
+          tr.style.display = 'none';
+          return;
+        }
+        const rowText = tr.dataset.row;
+        const aprov = tr.dataset.aprov;
+        const whse = tr.dataset.whse;
+        const item = tr.dataset.item;
+        const prov = tr.dataset.prov;
+        const cajas = parseInt(tr.dataset.cajas) || 0;
         
-        // Selected CDs
-        const selectedCDs = [];
-        document.querySelectorAll('.cd-pill.active').forEach(btn => {
-          selectedCDs.push(btn.dataset.cd);
-        });
-        
-        // El backend ya filtra solo filas con pedido, mantenemos onlyWithOrder como true
-        const onlyWithOrder = true;
+        // Calcular techo según flujo de la fila (CARRUSEL es flujo continuo = objetivo + 2, STAPLE es objetivo * 2)
+        const rowCeiling = aprov === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
 
-        // Obtener dias de inventario objetivo
-        const diasInvInput = document.querySelector('input[name="dias_inv"]');
-        const diasInv = diasInvInput ? parseInt(diasInvInput.value) || 15 : 15;
-
-        // Checkbox para ocultar exceeded DOH
-        const hideExceededEl = document.getElementById('bi-hide-exceeded-doh');
-        const hideExceeded = hideExceededEl ? hideExceededEl.checked : false;
-
-        let visCount = 0;
-        let totalCajas = 0;
-        let stapleCajas = 0;
-        let carruCajas = 0;
-        let exceededCount = 0;
-        let itemsSet = new Set();
-        let provsSet = new Set();
-        const provCajas = {};
-
-        document.querySelectorAll('#tabla-resultados tbody tr').forEach(tr => {
-          if (tr.classList.contains('manually-excluded')) {
-            tr.style.display = 'none';
-            return;
-          }
-          const rowText = tr.dataset.row;
-          const aprov = tr.dataset.aprov;
-          const whse = tr.dataset.whse;
-          const item = tr.dataset.item;
-          const prov = tr.dataset.prov;
-          const cajas = parseInt(tr.dataset.cajas) || 0;
-          
-          // Calcular techo según flujo de la fila (CARRUSEL es flujo continuo = objetivo + 2, STAPLE es objetivo * 2)
-          const rowCeiling = aprov === 'CARRUSEL' ? (diasInv + 2) : (diasInv * 2);
-
-          // Evaluar si supera el techo
-          const dohText = tr.dataset.doh;
-          const dohVal = dohText ? parseFloat(dohText) : NaN;
-          let isExceeded = false;
-          if (!isNaN(dohVal) && dohVal > rowCeiling) {
-            isExceeded = true;
-          }
-
-          let show = true;
-
-          if (q && !rowText.includes(q)) show = false;
-          if (aprovFilter !== 'ALL' && aprov !== aprovFilter) show = false;
-          if (selectedCDs.length > 0 && !selectedCDs.includes(whse)) show = false;
-          if (onlyWithOrder && cajas <= 0) show = false;
-
-          // Solo contamos como excedido si pasa los filtros previos de visualización de la tabla
-          if (show && isExceeded) {
-            exceededCount++;
-          }
-
-          if (show && hideExceeded && isExceeded) {
-            show = false; // Excluir si el switch está ON
-          }
-
-          tr.style.display = show ? '' : 'none';
-
-          if (show) {
-            visCount++;
-            totalCajas += cajas;
-            if (aprov === 'STAPLE') {
-              stapleCajas += cajas;
-            } else {
-              carruCajas += cajas;
-            }
-            itemsSet.add(item);
-            provsSet.add(prov);
-            if (cajas > 0) {
-              provCajas[prov] = (provCajas[prov] || 0) + cajas;
-            }
-          }
-        });
-
-        // Actualizar KPIs de forma reactiva
-        const kpiFilas = document.getElementById('kpi-filas');
-        const kpiItems = document.getElementById('kpi-items');
-        const kpiProvs = document.getElementById('kpi-provs');
-        const kpiCajas = document.getElementById('kpi-cajas');
-        const kpiStaple = document.getElementById('kpi-staple');
-        const kpiCarrusel = document.getElementById('kpi-carrusel');
-
-        if (kpiFilas) kpiFilas.textContent = visCount.toLocaleString();
-        if (kpiItems) kpiItems.textContent = itemsSet.size.toLocaleString();
-        if (kpiProvs) kpiProvs.textContent = provsSet.size.toLocaleString();
-        if (kpiCajas) kpiCajas.textContent = totalCajas.toLocaleString();
-        if (kpiStaple) kpiStaple.textContent = stapleCajas.toLocaleString();
-        if (kpiCarrusel) kpiCarrusel.textContent = carruCajas.toLocaleString();
-
-        // Actualizar resumen de proveedores
-        const sortedProvs = Object.entries(provCajas).sort((a, b) => b[1] - a[1]);
-        const container = document.getElementById('prov-summary-container');
-        if (container) {
-          if (sortedProvs.length === 0) {
-            container.innerHTML = '<span class="text-gray-400 font-medium">Ningún proveedor con pedido visible.</span>';
-          } else {
-            container.innerHTML = sortedProvs.map(([prov, cjs]) => {
-              return `<div class="bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-100 flex items-center gap-2">
-                <span class="font-bold text-gray-800">${prov}</span>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">${cjs.toLocaleString()} cajas</span>
-              </div>`;
-            }).join('');
-          }
+        // Evaluar si supera el techo
+        const dohText = tr.dataset.doh;
+        const dohVal = dohText ? parseFloat(dohText) : NaN;
+        let isExceeded = false;
+        if (!isNaN(dohVal) && dohVal > rowCeiling) {
+          isExceeded = true;
         }
 
-        // Actualizar banner de alerta DOH
-        const banner = document.getElementById('doh-alert-banner');
-        const ceilingDaysLabel = document.getElementById('ceiling-days-label');
-        const exceededCountLabel = document.getElementById('exceeded-count-label');
-        if (banner) {
-          if (exceededCount > 0) {
-            banner.classList.remove('hidden');
-            if (ceilingDaysLabel) {
-              ceilingDaysLabel.textContent = `+2 días para CARRUSEL / *2 para STAPLE`;
-            }
-            if (exceededCountLabel) exceededCountLabel.textContent = exceededCount;
+        let show = true;
+
+        if (q && !rowText.includes(q)) show = false;
+        if (aprovFilter !== 'ALL' && aprov !== aprovFilter) show = false;
+        if (selectedCDs.length > 0 && !selectedCDs.includes(whse)) show = false;
+        if (onlyWithOrder && cajas <= 0) show = false;
+
+        // Solo contamos como excedido si pasa los filtros previos de visualización de la tabla
+        if (show && isExceeded) {
+          exceededCount++;
+        }
+
+        if (show && hideExceeded && isExceeded) {
+          show = false; // Excluir si el switch está ON
+        }
+
+        tr.style.display = show ? '' : 'none';
+
+        if (show) {
+          visCount++;
+          totalCajas += cajas;
+          if (aprov === 'STAPLE') {
+            stapleCajas += cajas;
           } else {
-            banner.classList.add('hidden');
+            carruCajas += cajas;
+          }
+          itemsSet.add(item);
+          provsSet.add(prov);
+          if (cajas > 0) {
+            provCajas[prov] = (provCajas[prov] || 0) + cajas;
           }
         }
-      } catch (err) {
-        console.error("ERROR EN SCRIPT applyBiFilters: ", err);
+      });
+
+      // Actualizar KPIs de forma reactiva
+      const kpiFilas = document.getElementById('kpi-filas');
+      const kpiItems = document.getElementById('kpi-items');
+      const kpiProvs = document.getElementById('kpi-provs');
+      const kpiCajas = document.getElementById('kpi-cajas');
+      const kpiStaple = document.getElementById('kpi-staple');
+      const kpiCarrusel = document.getElementById('kpi-carrusel');
+
+      if (kpiFilas) kpiFilas.textContent = visCount.toLocaleString();
+      if (kpiItems) kpiItems.textContent = itemsSet.size.toLocaleString();
+      if (kpiProvs) kpiProvs.textContent = provsSet.size.toLocaleString();
+      if (kpiCajas) kpiCajas.textContent = totalCajas.toLocaleString();
+      if (kpiStaple) kpiStaple.textContent = stapleCajas.toLocaleString();
+      if (kpiCarrusel) kpiCarrusel.textContent = carruCajas.toLocaleString();
+
+      // Actualizar resumen de proveedores
+      const sortedProvs = Object.entries(provCajas).sort((a, b) => b[1] - a[1]);
+      const container = document.getElementById('prov-summary-container');
+      if (container) {
+        if (sortedProvs.length === 0) {
+          container.innerHTML = '<span class="text-gray-400 font-medium">Ningún proveedor con pedido visible.</span>';
+        } else {
+          container.innerHTML = sortedProvs.map(([prov, cjs]) => {
+            return `<div class="bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-100 flex items-center gap-2">
+              <span class="font-bold text-gray-800">${prov}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">${cjs.toLocaleString()} cajas</span>
+            </div>`;
+          }).join('');
+        }
+      }
+
+      // Actualizar banner de alerta DOH
+      const banner = document.getElementById('doh-alert-banner');
+      const ceilingDaysLabel = document.getElementById('ceiling-days-label');
+      const exceededCountLabel = document.getElementById('exceeded-count-label');
+      if (banner) {
+        if (exceededCount > 0) {
+          banner.classList.remove('hidden');
+          if (ceilingDaysLabel) {
+            ceilingDaysLabel.textContent = `+2 días para CARRUSEL / *2 para STAPLE`;
+          }
+          if (exceededCountLabel) exceededCountLabel.textContent = exceededCount;
+        } else {
+          banner.classList.add('hidden');
+        }
+      }
+    }
+        }
+      });
+
+      // Actualizar KPIs de forma reactiva
+      const kpiFilas = document.getElementById('kpi-filas');
+      const kpiItems = document.getElementById('kpi-items');
+      const kpiProvs = document.getElementById('kpi-provs');
+      const kpiCajas = document.getElementById('kpi-cajas');
+      const kpiStaple = document.getElementById('kpi-staple');
+      const kpiCarrusel = document.getElementById('kpi-carrusel');
+
+      if (kpiFilas) kpiFilas.textContent = visCount.toLocaleString();
+      if (kpiItems) kpiItems.textContent = itemsSet.size.toLocaleString();
+      if (kpiProvs) kpiProvs.textContent = provsSet.size.toLocaleString();
+      if (kpiCajas) kpiCajas.textContent = totalCajas.toLocaleString();
+      if (kpiStaple) kpiStaple.textContent = stapleCajas.toLocaleString();
+      if (kpiCarrusel) kpiCarrusel.textContent = carruCajas.toLocaleString();
+
+      // Actualizar resumen de proveedores
+      const sortedProvs = Object.entries(provCajas).sort((a, b) => b[1] - a[1]);
+      const container = document.getElementById('prov-summary-container');
+      if (container) {
+        if (sortedProvs.length === 0) {
+          container.innerHTML = '<span class="text-gray-400 font-medium">Ningún proveedor con pedido visible.</span>';
+        } else {
+          container.innerHTML = sortedProvs.map(([prov, cjs]) => {
+            return `<div class="bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-100 flex items-center gap-2">
+              <span class="font-bold text-gray-800">${prov}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">${cjs.toLocaleString()} cajas</span>
+            </div>`;
+          }).join('');
+        }
+      }
+
+      // Actualizar banner de alerta DOH
+      const banner = document.getElementById('doh-alert-banner');
+      const ceilingDaysLabel = document.getElementById('ceiling-days-label');
+      const exceededCountLabel = document.getElementById('exceeded-count-label');
+      if (banner) {
+        if (exceededCount > 0) {
+          banner.classList.remove('hidden');
+          if (ceilingDaysLabel) ceilingDaysLabel.textContent = ceiling;
+          if (exceededCountLabel) exceededCountLabel.textContent = exceededCount;
+        } else {
+          banner.classList.add('hidden');
+        }
       }
     }
 
@@ -847,6 +888,108 @@ PAGE = """<!DOCTYPE html>
       XLSX.writeFile(workbook, fileName);
     }
   </script>
-
 </body>
 </html>"""
+
+
+# ── Rutas ──────────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return PAGE
+
+
+@app.post("/consultar", response_class=HTMLResponse)
+async def consultar(
+    dias_inv:        str = Form("15"),
+    dept:            str = Form("2,4,13,26,40,46"),
+    categoria:       str = Form(""),
+    items:           str = Form(""),
+    proveedor:       str = Form(""),
+    whse_nbr:        str = Form(""),
+):
+    filtros = FiltrosCompras(
+        dias_inv        = int(dias_inv) if dias_inv.strip().isdigit() else 15,
+        dept            = dept,
+        categoria       = categoria,
+        proveedor       = proveedor,
+        items           = items,
+        whse_nbr        = whse_nbr,
+        solo_con_pedido = True,  # Traemos SOLO las filas con pedido de BigQuery!
+    )
+
+    try:
+        rows, sql = ejecutar_query(filtros)
+    except Exception as exc:
+        return f"""
+        <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-red-800">
+          <p class="font-semibold mb-1"> Error al ejecutar la query</p>
+          <pre class="text-xs overflow-auto whitespace-pre-wrap">{str(exc)}</pre>
+          <details class="mt-3">
+            <summary class="cursor-pointer text-xs text-red-500">Ver SQL generado</summary>
+            <pre class="text-xs mt-2 overflow-auto whitespace-pre-wrap bg-red-100 p-3 rounded">{sql}</pre>
+          </details>
+        </div>"""
+
+    dias_inv_int = filtros.dias_inv
+    resumen      = _resumen_html(rows, dias_inv_int)
+    tabla        = _tabla_html(rows, dias_inv_int)
+
+    alert_banner = """
+    <div id="doh-alert-banner" class="hidden bg-amber-50 border-2 border-amber-200 rounded-xl p-4 mb-4">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div class="flex items-center gap-2.5 text-amber-800 font-bold">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span class="text-sm">¡Alerta! Hay ítems que sobrepasan el techo de DOH (<span id="ceiling-days-label">30</span> días)</span>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+          <input type="checkbox" id="bi-hide-exceeded-doh" onchange="applyBiFilters()" class="sr-only peer">
+          <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+          <span class="ml-2 text-xs font-bold text-amber-950 select-none">Eliminar del reporte y exportación</span>
+        </label>
+      </div>
+      <p class="text-xs text-amber-700 mt-1.5">Se detectaron <span id="exceeded-count-label" class="font-extrabold text-amber-900">0</span> filas que sobrepasan el límite de DOH. Activa el interruptor para excluirlas de los KPIs, del resumen de proveedores, de la visualización y del archivo Excel.</p>
+    </div>
+    """
+
+    # Agregar los botones de exportar y la cabecera interactiva del listado
+    header_listado = f"""
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+        <h3 class="text-sm font-bold text-gray-800">Listado de Pedidos Calculados</h3>
+        <p class="text-xs text-gray-500">Usa los BI Slicers de la izquierda para filtrar la tabla antes de exportar.</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Botón Exportar STAPLE -->
+        <button onclick="exportarFormatoCompra('STAPLE')"
+          class="bg-[#0053e2] hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-xs tracking-wider uppercase shadow-sm transition-all flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+          <span>Exportar STAPLE (CD)</span>
+        </button>
+
+        <!-- Botón Exportar CARRUSEL -->
+        <button onclick="exportarFormatoCompra('CARRUSEL')"
+          class="bg-[#7c3aed] hover:bg-violet-700 text-white font-bold px-4 py-2.5 rounded-lg text-xs tracking-wider uppercase shadow-sm transition-all flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+          <span>Exportar CARRUSEL (Tienda)</span>
+        </button>
+      </div>
+    </div>
+    """
+
+    # Trigger JS after HTMX update to apply default filtering immediately
+    js_trigger = """
+    <script>
+      setTimeout(() => {
+        applyBiFilters();
+      }, 50);
+    </script>
+    """
+
+    return resumen + alert_banner + header_listado + tabla + js_trigger
