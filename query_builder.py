@@ -230,7 +230,9 @@ resultado AS (
             THEN ROUND((STOCK_CD + cajas_ped_cd) * WHPK_QTY * 7 / fcst_cd_sum, 1)
             ELSE NULL
         END                                                          AS DOH_CD_POST,
-        dias_inv
+        dias_inv,
+        rn,
+        fcst_cd_sum
     FROM cajas_cd
 )
 
@@ -293,9 +295,17 @@ def _cargar_tlos() -> dict[str, dict[str, int]]:
     tlo_path = r"C:\Users\vn5aif4\Downloads\TLO.xlsx"
     if not os.path.exists(tlo_path):
         return tlos
+    
+    import shutil
+    import tempfile
+    import openpyxl
+    
+    # Copiar a un archivo temporal para evitar bloqueos si el usuario tiene el archivo abierto en Excel
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, "TLO_temp.xlsx")
     try:
-        import openpyxl
-        wb = openpyxl.load_workbook(tlo_path, read_only=True)
+        shutil.copy2(tlo_path, temp_path)
+        wb = openpyxl.load_workbook(temp_path, read_only=True)
         sheet = wb.active
         for row in sheet.iter_rows(min_row=2, values_only=True):
             if len(row) >= 3:
@@ -307,6 +317,12 @@ def _cargar_tlos() -> dict[str, dict[str, int]]:
                     }
     except Exception as e:
         print("Error al cargar TLO.xlsx:", e)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
     return tlos
 
 
@@ -359,10 +375,10 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for r in group_rows:
             cajas = int(r.get("CAJAS_A_PEDIR") or 0)
             pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
-            rn = r.get("rn", 1)
-            fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+            rn = r.get("rn") or r.get("RN") or 1
+            fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
             
-            if rn == 1 and pallet_cajas > 0 and fcst_cd_sum > 0:
+            if int(rn) == 1 and pallet_cajas > 0 and fcst_cd_sum > 0:
                 eligible_rows.append(r)
             if pallet_cajas > 0:
                 total_pallets += cajas / pallet_cajas
@@ -391,7 +407,7 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     cajas = int(r.get("CAJAS_A_PEDIR") or 0)
                     stock_cd = int(r.get("STOCK_CD") or 0)
                     whpk = int(r.get("WHPK_QTY") or 0)
-                    fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+                    fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
                     
                     doh = (stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum
                     if doh < best_doh:
@@ -405,7 +421,7 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     # Verificar si al agregar este pallet, el nuevo DOH post-compra excede el techo
                     stock_cd = int(best_row.get("STOCK_CD") or 0)
                     whpk = int(best_row.get("WHPK_QTY") or 0)
-                    fcst_cd_sum = float(best_row.get("fcst_cd_sum") or 0.0)
+                    fcst_cd_sum = float(best_row.get("fcst_cd_sum") or best_row.get("FCST_CD_SUM") or 0.0)
                     new_doh = (stock_cd + best_row["CAJAS_A_PEDIR"]) * whpk * 7.0 / fcst_cd_sum
                     if new_doh > ceiling:
                         safe_to_add = False
@@ -433,7 +449,7 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
                         stock_cd = int(r.get("STOCK_CD") or 0)
                         whpk = int(r.get("WHPK_QTY") or 0)
-                        fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+                        fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
                         
                         # Solo podemos quitar si ya tenemos cajas pedidas
                         if cajas >= pallet_cajas:
@@ -468,7 +484,7 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 
                 stock_cd = int(r.get("STOCK_CD") or 0)
                 whpk = int(r.get("WHPK_QTY") or 0)
-                fcst_cd_sum = float(r.get("fcst_cd_sum") or 0.0)
+                fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
                 if fcst_cd_sum > 0:
                     r["DOH_CD_POST"] = round((stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum, 1)
 
