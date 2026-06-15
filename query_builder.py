@@ -77,8 +77,8 @@ def construir_query(f: FiltrosCompras) -> str:
     depts = [d.strip() for d in f.dept.split(",") if d.strip().isdigit()]
     dept_str = ", ".join(depts) if depts else "13"
 
-    filtro_cat   = "AND UPPER(T1.CATEGORIA) LIKE UPPER(CONCAT('%', @categoria, '%'))" if f.categoria.strip() else ""
-    filtro_prov  = "AND UPPER(T1.PROVEEDOR) LIKE UPPER(CONCAT('%', @proveedor, '%'))" if f.proveedor.strip() else ""
+    filtro_cat   = "AND UPPER(T1.CATEGORIA) LIKE @categoria" if f.categoria.strip() else ""
+    filtro_prov  = "AND UPPER(T1.PROVEEDOR) LIKE @proveedor" if f.proveedor.strip() else ""
     filtro_item  = "AND T1.ITEM IN UNNEST(@items)"  if _lista_int(f.items)  else ""
     filtro_whse  = "AND T1.WHSE_NBR IN UNNEST(@whse_list)" if _lista_int(f.whse_nbr) else ""
 
@@ -563,9 +563,9 @@ def ejecutar_query(
 
     params: list = []
     if f_internal.categoria.strip():
-        params.append(bigquery.ScalarQueryParameter("categoria", "STRING", f_internal.categoria.strip()))
+        params.append(bigquery.ScalarQueryParameter("categoria", "STRING", f"%{f_internal.categoria.strip().upper()}%"))
     if f_internal.proveedor.strip():
-        params.append(bigquery.ScalarQueryParameter("proveedor", "STRING", f_internal.proveedor.strip().upper()))
+        params.append(bigquery.ScalarQueryParameter("proveedor", "STRING", f"%{f_internal.proveedor.strip().upper()}%"))
     items_list = _lista_int(f_internal.items)
     if items_list:
         params.append(bigquery.ArrayQueryParameter("items", "INT64", items_list))
