@@ -339,17 +339,17 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from collections import defaultdict
     import copy
 
-    # Agrupar filas por (PROVEEDOR, WHSE_NBR) para STAPLE
+    # Agrupar filas por (PROVEEDOR, WHSE_NBR, APROV) para STAPLE y CARRUSEL
     groups = defaultdict(list)
     for r in rows:
         aprov = str(r.get("APROV", "")).upper()
-        if aprov == "STAPLE":
+        if aprov in ("STAPLE", "CARRUSEL"):
             prov = str(r.get("PROVEEDOR", "")).strip().upper()
             whse = r.get("WHSE_NBR")
             if prov and whse is not None:
-                groups[(prov, int(whse))].append(r)
+                groups[(prov, int(whse), aprov)].append(r)
 
-    for (prov, whse), group_rows in groups.items():
+    for (prov, whse, aprov), group_rows in groups.items():
         tlo_rule = tlos.get(prov)
         if not tlo_rule or tlo_rule.get("tlo") != 1:
             continue
@@ -358,8 +358,8 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if min_pallets <= 0:
             continue
 
-        # Capacidad de camion completo estandar es 60 pallets
-        full_truck_capacity = 60
+        # Capacidad de camion completo segun proveedor (TLO)
+        full_truck_capacity = min_pallets
         
         # Dias objetivo y techo
         dias_inv = 15
@@ -367,23 +367,82 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if r.get("dias_inv") is not None:
                 dias_inv = int(r.get("dias_inv"))
                 break
-        ceiling = dias_inv * 2
+        
+        # Techo de DOH: STAPLE es dias_inv * 2, CARRUSEL es dias_inv + 2
+        if aprov == "CARRUSEL":
+            ceiling = dias_inv + 2
+        else:
+            ceiling = dias_inv * 2
+
+        # Agrupar el grupo por ITEM
+        item_to_rows = defaultdict(list)
+        for r in group_rows:
+            item_to_rows[r.get("ITEM")].append(r)
+
+        # Redondear el pedido total de cada ítem a múltiplos de pallet completo
+        # Esto elimina los decimales para que la optimización dé camiones perfectos
+        for item_id, item_rows in item_to_rows.items():
+            r_rn1 = next((r for r in item_rows if int(r.get("rn") or r.get("RN") or 1) == 1), None)
+            if not r_rn1:
+                r_rn1 = item_rows[0]
+            pallet_cajas = int(r_rn1.get("PALLET_CAJAS") or 0)
+            if pallet_cajas <= 0:
+                continue
+
+            total_cajas = sum(int(r.get("CAJAS_A_PEDIR") or 0) for r in item_rows)
+            # Redondeo al múltiplo de pallet más cercano
+            total_pallets_item = round(total_cajas / pallet_cajas)
+            final_cajas = total_pallets_item * pallet_cajas
+
+            if final_cajas != total_cajas:
+                if final_cajas > total_cajas:
+                    diff = final_cajas - total_cajas
+                    r_rn1["CAJAS_A_PEDIR"] = int(r_rn1.get("CAJAS_A_PEDIR") or 0) + diff
+                    r_rn1["INCREMENTO_TLO_CAJAS"] = int(r_rn1.get("INCREMENTO_TLO_CAJAS") or 0) + diff
+                else:
+                    diff = total_cajas - final_cajas
+                    for r in sorted(item_rows, key=lambda x: int(x.get("CAJAS_A_PEDIR") or 0), reverse=True):
+                        cajas = int(r.get("CAJAS_A_PEDIR") or 0)
+                        if cajas > 0 and diff > 0:
+                            removed = min(cajas, diff)
+                            r["CAJAS_A_PEDIR"] = cajas - removed
+                            r["INCREMENTO_TLO_CAJAS"] = int(r.get("INCREMENTO_TLO_CAJAS") or 0) - removed
+                            diff -= removed
+
+        # Crear una representación simplificada de cada ítem para la simulación
+        sim_items = []
+        for item_id, item_rows in item_to_rows.items():
+            # Buscar la fila con rn = 1 para este item
+            r_rn1 = next((r for r in item_rows if int(r.get("rn") or r.get("RN") or 1) == 1), None)
+            if not r_rn1:
+                r_rn1 = item_rows[0]
+
+            pallet_cajas = int(r_rn1.get("PALLET_CAJAS") or 0)
+            fcst_cd_sum = float(r_rn1.get("fcst_cd_sum") or r_rn1.get("FCST_CD_SUM") or 0.0)
+            stock_cd = int(r_rn1.get("STOCK_CD") or 0)
+            whpk = int(r_rn1.get("WHPK_QTY") or 0)
+
+            total_cajas = sum(int(r.get("CAJAS_A_PEDIR") or 0) for r in item_rows)
+
+            if pallet_cajas > 0 and fcst_cd_sum > 0:
+                sim_items.append({
+                    "item": item_id,
+                    "pallet_cajas": pallet_cajas,
+                    "fcst_cd_sum": fcst_cd_sum,
+                    "stock_cd": stock_cd,
+                    "whpk": whpk,
+                    "total_cajas": total_cajas,
+                    "rn1_row": r_rn1,
+                    "all_rows": item_rows
+                })
+
+        if not sim_items:
+            continue
 
         # Calcular pallets actuales
-        total_pallets = 0.0
-        eligible_rows = []
-        for r in group_rows:
-            cajas = int(r.get("CAJAS_A_PEDIR") or 0)
-            pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
-            rn = r.get("rn") or r.get("RN") or 1
-            fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
-            
-            if int(rn) == 1 and pallet_cajas > 0 and fcst_cd_sum > 0:
-                eligible_rows.append(r)
-            if pallet_cajas > 0:
-                total_pallets += cajas / pallet_cajas
+        total_pallets = sum(item["total_cajas"] / item["pallet_cajas"] for item in sim_items)
 
-        if total_pallets <= 0 or not eligible_rows:
+        if total_pallets <= 0:
             continue
 
         # Calcular el remanente en el último camión
@@ -395,86 +454,72 @@ def _aplicar_tlo_staple(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             pallets_to_add = int(math.ceil(deficit))
             
             # --- EVALUACION DE OPCION 1: COMPLETAR (ROUND UP) ---
-            # Hacemos una simulacion en una copia de las filas
-            sim_rows = copy.deepcopy(eligible_rows)
+            sim_items_copy = copy.deepcopy(sim_items)
             safe_to_add = True
             
             # Reparto Greedy simulado
             for _ in range(pallets_to_add):
-                best_row = None
+                best_item = None
                 best_doh = float("inf")
-                for r in sim_rows:
-                    cajas = int(r.get("CAJAS_A_PEDIR") or 0)
-                    stock_cd = int(r.get("STOCK_CD") or 0)
-                    whpk = int(r.get("WHPK_QTY") or 0)
-                    fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
-                    
-                    doh = (stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum
+                for item in sim_items_copy:
+                    doh = (item["stock_cd"] + item["total_cajas"]) * item["whpk"] * 7.0 / item["fcst_cd_sum"]
                     if doh < best_doh:
                         best_doh = doh
-                        best_row = r
+                        best_item = item
                 
-                if best_row:
-                    pallet_cajas = int(best_row.get("PALLET_CAJAS") or 0)
-                    best_row["CAJAS_A_PEDIR"] = int(best_row.get("CAJAS_A_PEDIR") or 0) + pallet_cajas
-                    
-                    # Verificar si al agregar este pallet, el nuevo DOH post-compra excede el techo
-                    stock_cd = int(best_row.get("STOCK_CD") or 0)
-                    whpk = int(best_row.get("WHPK_QTY") or 0)
-                    fcst_cd_sum = float(best_row.get("fcst_cd_sum") or best_row.get("FCST_CD_SUM") or 0.0)
-                    new_doh = (stock_cd + best_row["CAJAS_A_PEDIR"]) * whpk * 7.0 / fcst_cd_sum
+                if best_item:
+                    best_item["total_cajas"] += best_item["pallet_cajas"]
+                    new_doh = (best_item["stock_cd"] + best_item["total_cajas"]) * best_item["whpk"] * 7.0 / best_item["fcst_cd_sum"]
                     if new_doh > ceiling:
                         safe_to_add = False
                         break
             
-            # Si completar el camion es SEGURO (ningun item supera el techo de DOH)
+            # Si completar el camion es SEGURO
             if safe_to_add:
-                # Aplicamos la simulación al grupo real
-                for i, r in enumerate(eligible_rows):
-                    added_cajas = sim_rows[i]["CAJAS_A_PEDIR"] - int(r.get("CAJAS_A_PEDIR") or 0)
+                # Aplicamos la simulación
+                for i, item in enumerate(sim_items):
+                    added_cajas = sim_items_copy[i]["total_cajas"] - item["total_cajas"]
                     if added_cajas > 0:
-                        r["CAJAS_A_PEDIR"] = sim_rows[i]["CAJAS_A_PEDIR"]
-                        r["INCREMENTO_TLO_CAJAS"] = added_cajas
+                        # Añadimos el incremento de cajas a la fila con rn == 1
+                        r1 = item["rn1_row"]
+                        r1["CAJAS_A_PEDIR"] = int(r1.get("CAJAS_A_PEDIR") or 0) + added_cajas
+                        r1["INCREMENTO_TLO_CAJAS"] = added_cajas
             else:
                 # --- OPCION 2: RECORTAR (ROUND DOWN) ---
-                # Si no es seguro completar, recortamos el camión incompleto
                 pallets_to_remove = int(math.ceil(remaining_pallets))
                 
                 for _ in range(pallets_to_remove):
-                    best_row = None
+                    best_item = None
                     best_doh = -float("inf")
                     
-                    for r in eligible_rows:
-                        cajas = int(r.get("CAJAS_A_PEDIR") or 0)
-                        pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
-                        stock_cd = int(r.get("STOCK_CD") or 0)
-                        whpk = int(r.get("WHPK_QTY") or 0)
-                        fcst_cd_sum = float(r.get("fcst_cd_sum") or r.get("FCST_CD_SUM") or 0.0)
-                        
-                        # Solo podemos quitar si ya tenemos cajas pedidas
-                        if cajas >= pallet_cajas:
-                            doh = (stock_cd + cajas) * whpk * 7.0 / fcst_cd_sum
+                    for item in sim_items:
+                        if item["total_cajas"] >= item["pallet_cajas"]:
+                            doh = (item["stock_cd"] + item["total_cajas"]) * item["whpk"] * 7.0 / item["fcst_cd_sum"]
                             if doh > best_doh:
                                 best_doh = doh
-                                best_row = r
+                                best_item = item
                     
-                    if best_row:
-                        pallet_cajas = int(best_row.get("PALLET_CAJAS") or 0)
-                        best_row["CAJAS_A_PEDIR"] = int(best_row.get("CAJAS_A_PEDIR") or 0) - pallet_cajas
-                        # Marcamos como incremento negativo (o simplemente restamos)
-                        best_row["INCREMENTO_TLO_CAJAS"] = int(best_row.get("INCREMENTO_TLO_CAJAS") or 0) - pallet_cajas
+                    if best_item:
+                        best_item["total_cajas"] -= best_item["pallet_cajas"]
+                        
+                        # Aplicamos el descuento a las filas reales.
+                        to_remove = best_item["pallet_cajas"]
+                        for r in sorted(best_item["all_rows"], key=lambda x: int(x.get("CAJAS_A_PEDIR") or 0), reverse=True):
+                            cajas = int(r.get("CAJAS_A_PEDIR") or 0)
+                            if cajas > 0 and to_remove > 0:
+                                removed = min(cajas, to_remove)
+                                r["CAJAS_A_PEDIR"] = cajas - removed
+                                r["INCREMENTO_TLO_CAJAS"] = int(r.get("INCREMENTO_TLO_CAJAS") or 0) - removed
+                                to_remove -= removed
 
-            # Recalcular DOH_CD_POST y PALLETS_A_PEDIR para el grupo finalizado
+            # Recalcular DOH_CD_POST y PALLETS_A_PEDIR para todo el grupo finalizado
             item_cajas = {}
-            for r in group_rows:
-                rn = r.get("rn", 1)
-                item = r.get("ITEM")
-                if rn == 1:
-                    item_cajas[item] = int(r.get("CAJAS_A_PEDIR") or 0)
+            for item_id, item_rows in item_to_rows.items():
+                item_cajas[item_id] = sum(int(r.get("CAJAS_A_PEDIR") or 0) for r in item_rows)
 
             for r in group_rows:
-                item = r.get("ITEM")
-                cajas = item_cajas.get(item, 0)
+                item_id = r.get("ITEM")
+                cajas = item_cajas.get(item_id, 0)
                 pallet_cajas = int(r.get("PALLET_CAJAS") or 0)
                 
                 if pallet_cajas > 0:
